@@ -2,7 +2,7 @@
 
 英文名 **Alight**：鸟落下并停住。不用 Sling、Angry、Shot。
 
-配套：[AGENTS.md](../AGENTS.md) · [ENGINEERING.md](./ENGINEERING.md)
+配套：[AGENTS.md](../AGENTS.md) · [IMPLEMENTATION.md](./IMPLEMENTATION.md) · [ENGINEERING.md](./ENGINEERING.md)
 
 > 玩法尚未实现。本文是当前暂定规则，供关卡和原型使用。做关卡时遇到问题再改。  
 > 场地是底座的竖屏一屏（设计空间 390×844）。镜头不跟鸟走。

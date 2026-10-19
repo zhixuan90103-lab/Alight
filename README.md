@@ -10,6 +10,8 @@
 | [docs/MERGE.md](./docs/MERGE.md) | 双工程优点对照与合并说明 |
 | [docs/AUDIO.md](./docs/AUDIO.md) | 音效方案（预解码 + 每帧一批 + 原生池） |
 | [docs/HAPTICS.md](./docs/HAPTICS.md) | 震动如何一次接对（插件注册 + 玩法层） |
+| [docs/GAME-RULES.md](./docs/GAME-RULES.md) | Alight 规则 |
+| [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md) | Alight 实现方案 |
 
 ## 30 秒上手
 

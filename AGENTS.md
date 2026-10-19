@@ -24,6 +24,8 @@
 | 构建 | `vite.config.ts`（**`base: './'`**） |
 | iOS 注入 | `scripts/bootstrap-ios.mjs` |
 | 音效方案（未实现） | `docs/AUDIO.md` |
+| Alight 规则 | `docs/GAME-RULES.md` |
+| Alight 实现 | `docs/IMPLEMENTATION.md` |
 
 ## DOM（勿拆）
 
@@ -61,7 +63,7 @@ npm run ios
 
 ## 业务怎么加
 
-- 玩法：改 `src/main.ts` 或 `src/game/*`  
+- 玩法：按 `docs/GAME-RULES.md` 与 `docs/IMPLEMENTATION.md`，改 `src/main.ts` 或 `src/game/*`  
 - 保留：adapt / create-renderer / haptics / plugins / `base`  
 - 触控：`clientToDesign` + 忽略 letterbox 外  
 - 音效：按 `docs/AUDIO.md` 接入；禁止热路径 `new Audio()` / 每发一次桥  
