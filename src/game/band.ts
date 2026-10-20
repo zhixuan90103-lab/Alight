@@ -4,7 +4,7 @@ import {
   BAND_ZETA,
   bandWidth,
   BIRD_R,
-  EMPTY_SAG,
+  emptyBandY,
   MAX_PULL,
   POUCH,
   ROPE_MASS,
@@ -216,11 +216,9 @@ function cupAt(ballX: number, ballY: number, seat: number, angle: number): Array
   return poseFrom(ballX, ballY, seat, tip, tip, { start: angle, span: 0 });
 }
 
-function restAt(t: number, sag: number): { x: number; y: number } {
-  return {
-    x: ANCHOR_L.x + (ANCHOR_R.x - ANCHOR_L.x) * t,
-    y: SLING_MID.y - sag * 4 * t * (1 - t),
-  };
+function restAt(t: number): { x: number; y: number } {
+  const x = ANCHOR_L.x + (ANCHOR_R.x - ANCHOR_L.x) * t;
+  return { x, y: emptyBandY(x) };
 }
 
 export class Band {
@@ -237,7 +235,7 @@ export class Band {
   constructor() {
     this.nodes = [];
     for (let i = 0; i < BAND_COUNT; i++) {
-      const empty = restAt(i / (BAND_COUNT - 1), EMPTY_SAG);
+      const empty = restAt(i / (BAND_COUNT - 1));
       this.nodes.push({ x: empty.x, y: empty.y, px: empty.x, py: empty.y, rx: empty.x, ry: empty.y });
     }
     this.holdSeated();
@@ -294,7 +292,9 @@ export class Band {
     const py = dist > 1 ? dy / dist : -1;
     const tx = px * pull;
     const ty = py * pull + -1 * (1 - pull);
-    const target = Math.atan2(ty, tx);
+    let target = Math.atan2(ty, tx);
+    // Upward is not a cradle direction. The band stays under the ball and tops out at its empty shape.
+    if (Math.sin(target) > 0) target = -Math.PI / 2;
     let delta = target - this.cupAngle;
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;

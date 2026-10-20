@@ -96,7 +96,9 @@ async function boot(): Promise<void> {
     if (event.pointerId !== pointerId) return;
     const world = designPoint(event);
     if (!world) return;
+    const before = sim.phase;
     sim.pointerMove(world.x, world.y);
+    if (before === 'pulling' && sim.phase === 'flying') void haptics.impact('rigid');
   });
 
   const endPointer = (event: PointerEvent) => {

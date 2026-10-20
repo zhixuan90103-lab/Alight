@@ -19,6 +19,8 @@ import {
   SLING_MID,
   STEP,
   STIFFNESS,
+  meetBallY,
+  slipBallY,
 } from './tune';
 
 export type Phase = 'ready' | 'pulling' | 'launching' | 'flying' | 'catching' | 'settling' | 'asleep' | 'returning' | 'gone';
@@ -197,13 +199,42 @@ export class Sim {
     const minY = GROUND_Y + BIRD_R + 12;
     x = Math.min(360, Math.max(30, x));
     y = Math.min(800, Math.max(minY, y));
+    const meet = meetBallY(x);
+    const slip = slipBallY(x);
+    if (y > slip) {
+      const here = this.bird.translation();
+      if (here.y >= slip - 0.5) {
+        this.slipOff(here.x, Math.min(here.y, slip));
+        return;
+      }
+      y = slip;
+    }
     this.bird.setNextKinematicTranslation({ x, y });
     this.ropeX = x;
     this.ropeY = y;
     this.ropeVx = 0;
     this.ropeVy = 0;
-    this.band.holdTaut(x, y);
+    // Past the empty band the band stays there. The ball may still rise a little in the hand.
+    if (y > meet) this.band.holdAtRest();
+    else this.band.holdTaut(x, y);
     this.world.step();
+  }
+
+  /**
+   * The finger kept going after the band was already straight.
+   * The ball drops from where it is. It is not a shot, and the finger cannot steer it.
+   */
+  private slipOff(x: number, y: number): void {
+    this.bird.setTranslation({ x, y }, true);
+    this.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    this.bird.setGravityScale(1, true);
+    this.bird.setLinvel({ x: 0, y: 0 }, true);
+    this.band.holdAtRest();
+    this.clearOfBand = false;
+    this.prevX = x;
+    this.prevY = y;
+    this.fouled = false;
+    this.phase = 'flying';
   }
 
   /**

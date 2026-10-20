@@ -65,3 +65,30 @@ export const GROUND_Y = 36;
  * straight down until the ball stops above the ground.
  */
 export const MAX_PULL = POUCH.y - (GROUND_Y + BIRD_R + 12);
+
+/** How far the ball may rise past the empty band before the finger loses it. */
+export const SLIP_LIFT = 18;
+
+/** Empty-band height at this x. Outside the anchors the curve is the anchor height. */
+export function emptyBandY(x: number): number {
+  const span = ANCHOR_R.x - ANCHOR_L.x;
+  const t = Math.min(1, Math.max(0, (x - ANCHOR_L.x) / span));
+  return SLING_MID.y - EMPTY_SAG * 4 * t * (1 - t);
+}
+
+function seatAt(x: number, y: number): number {
+  const pull = Math.hypot(x - POUCH.x, y - POUCH.y);
+  const strain = Math.min(1, pull / MAX_PULL);
+  return BIRD_R + bandWidth(strain) / 2 - 1;
+}
+
+/** Ball center when it is just sitting on the empty band. */
+export function meetBallY(x: number): number {
+  const y = emptyBandY(x) + BIRD_R;
+  return emptyBandY(x) + seatAt(x, y);
+}
+
+/** Ball center where an upward drag lets go. A little above the empty band. */
+export function slipBallY(x: number): number {
+  return meetBallY(x) + SLIP_LIFT;
+}
