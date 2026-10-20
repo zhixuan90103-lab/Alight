@@ -79,10 +79,10 @@ export async function createRenderer(
 /** Keep renderer + camera at design resolution (CSS scale handles display). */
 export function resizeToDesign(
   renderer: WebGPURenderer,
-  camera?: THREE.PerspectiveCamera,
+  camera?: THREE.Camera,
 ): { width: number; height: number } {
   renderer.setSize(DESIGN_WIDTH, DESIGN_HEIGHT, false);
-  if (camera) {
+  if (camera instanceof THREE.PerspectiveCamera) {
     camera.aspect = DESIGN_WIDTH / DESIGN_HEIGHT;
     camera.updateProjectionMatrix();
   }

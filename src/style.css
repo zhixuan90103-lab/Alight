@@ -117,6 +117,24 @@ body {
   padding-left: calc(var(--safe-left) + var(--ui-pad-x));
 }
 
+#hearts {
+  display: flex;
+  gap: 8px;
+}
+
+.heart {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 3px #e24b4b;
+}
+
+.heart.is-full {
+  background: #e24b4b;
+  box-shadow: none;
+}
+
 body.debug-safe-area #ui-root::before {
   content: '';
   pointer-events: none;
