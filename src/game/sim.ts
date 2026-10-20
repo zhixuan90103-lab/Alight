@@ -2,8 +2,7 @@ import RAPIER from '@dimforge/rapier2d-compat';
 import { aboveOpenMouth, bagContact, bagSeat, bagSpring, clearCloth, enteredMouth, pushCloth, touchCloth, type Cloth } from './bag';
 import { Band } from './band';
 import {
-  ANCHOR_L,
-  ANCHOR_R,
+  BAGS,
   BAND_ZETA,
   BIRD_R,
   DEAD_PULL,
@@ -13,38 +12,69 @@ import {
   MAX_CATCHUP,
   MAX_PULL,
   SHOW_BAG,
-  POUCH,
   ROPE_MASS,
   ROPE_THICKNESS,
-  SLING_MID,
+  SLINGS,
   STEP,
   STIFFNESS,
+  type Sling,
   meetBallY,
   slipBallY,
 } from './tune';
 
 export type Phase = 'ready' | 'pulling' | 'launching' | 'flying' | 'catching' | 'settling' | 'asleep' | 'returning' | 'gone';
 
-export type SimSample = {
+export type Feel = 'pull' | 'slip' | 'launch' | 'catch' | 'asleep' | 'miss' | 'gone' | 'give' | 'knock';
+
+export type ShotSample = {
   phase: Phase;
-  hearts: number;
   birdX: number;
   birdY: number;
-  ropeX: number;
-  ropeY: number;
   band: ReadonlyArray<{ x: number; y: number }>;
-  /** 0 at rest, 1 at a full pull. Visual tension only. */
   strain: number;
   aimX: number;
   aimY: number;
-  showBand: boolean;
-  /** True from the frame the center enters the mouth, before the wobble finishes. */
-  bagSealed: boolean;
-  bagAsleep: boolean;
-  /** How far the cloth is pushed in. The view shifts the bag along the normal. */
-  bagGive: number;
-  bagPressX: number;
-  bagPressY: number;
+};
+
+export type BagSample = {
+  sealed: boolean;
+  /** Ball has settled. The bag and the ball leave the playfield. */
+  gone: boolean;
+  give: number;
+  pressX: number;
+  pressY: number;
+};
+
+export type SimSample = {
+  hearts: number;
+  shots: ShotSample[];
+  bags: BagSample[];
+};
+
+type Shot = {
+  sling: Sling;
+  bird: RAPIER.RigidBody;
+  collider: RAPIER.Collider;
+  band: Band;
+  phase: Phase;
+  cloth: Cloth;
+  /** Bag this shot is pushing or settling into. -1 when none. */
+  bag: number;
+  clearOfBand: boolean;
+  prevX: number;
+  prevY: number;
+  catchVx: number;
+  catchVy: number;
+  returnIn: number;
+  drawn: number;
+  dirX: number;
+  dirY: number;
+  ropeX: number;
+  ropeY: number;
+  ropeVx: number;
+  ropeVy: number;
+  /** Band index this ball is settling onto. -1 when it is not being caught. */
+  catchOn: number;
 };
 
 let ready: Promise<void> | null = null;
@@ -58,65 +88,77 @@ function len(x: number, y: number): number {
   return Math.hypot(x, y);
 }
 
+const ANIMATION: ReadonlySet<Phase> = new Set(['launching', 'flying', 'catching', 'returning']);
+
 /**
- * One light ball and one blue bag.
- * The center crossing the mouth seals the bag and keeps the impact speed.
- * The same stiffness that seats the ball on the rope then settles it on the bag seat.
+ * Three balls, three bands, three bags. Each bag holds one ball.
+ * A sling with a ball can be pulled while another ball is in the air.
  */
 export class Sim {
   readonly world: RAPIER.World;
-  readonly bird: RAPIER.RigidBody;
-  private ballCollider: RAPIER.Collider;
   private groundCollider: RAPIER.Collider;
-  phase: Phase = 'ready';
+  private readonly shots: Shot[];
+  private readonly sealed: boolean[];
+  private readonly gone: boolean[];
   hearts = 3;
-  bagSealed = false;
-  bagAsleep = false;
-  private cloth: Cloth = clearCloth();
-
-  get bagGive(): number {
-    return this.cloth.give;
-  }
-  /** Stays false until the ball has left the band, so the launch itself is not a catch. */
-  private clearOfBand = false;
-  private prevX = POUCH.x;
-  private prevY = POUCH.y;
-  private catchVx = 0;
-  private catchVy = 0;
   private accumulator = 0;
-  private returnIn = 0;
-  private drawn = 0;
-  private dirX = 0;
-  private dirY = 1;
-  ropeX = POUCH.x;
-  ropeY = POUCH.y;
-  private ropeVx = 0;
-  private ropeVy = 0;
-  readonly band = new Band();
+  private active: number | null = null;
+  private feel: Feel[] = [];
+  /** Flyer index + seated index, so one overlap only knocks once. */
+  private knocks = new Set<string>();
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
-    // Pixel coordinates. The default length unit (1) clamps speeds that cross many pixels in one step.
     this.world.integrationParameters.lengthUnit = 80;
     const ground = RAPIER.ColliderDesc.cuboid(240, 16).setTranslation(195, GROUND_Y - 16);
     ground.setRestitution(0.05);
     this.groundCollider = this.world.createCollider(ground);
-
-    const desc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-      .setTranslation(POUCH.x, POUCH.y)
-      .setCcdEnabled(true);
-    this.bird = this.world.createRigidBody(desc);
-    this.ballCollider = this.world.createCollider(
-      RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS).setRestitution(0.05),
-      this.bird,
-    );
+    this.sealed = BAGS.map(() => false);
+    this.gone = BAGS.map(() => false);
+    this.shots = SLINGS.map((sling) => this.makeShot(sling));
   }
 
-  /** Push the live tune into bodies that were created once. */
+  private makeShot(sling: Sling): Shot {
+    const bird = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased()
+        .setTranslation(sling.pouch.x, sling.pouch.y)
+        .setCcdEnabled(true),
+    );
+    const collider = this.world.createCollider(
+      RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS).setRestitution(0.05),
+      bird,
+    );
+    return {
+      sling,
+      bird,
+      collider,
+      band: new Band(sling),
+      phase: 'ready',
+      cloth: clearCloth(),
+      bag: -1,
+      clearOfBand: false,
+      prevX: sling.pouch.x,
+      prevY: sling.pouch.y,
+      catchVx: 0,
+      catchVy: 0,
+      returnIn: 0,
+      drawn: 0,
+      dirX: 0,
+      dirY: 1,
+      ropeX: sling.pouch.x,
+      ropeY: sling.pouch.y,
+      ropeVx: 0,
+      ropeVy: 0,
+      catchOn: -1,
+    };
+  }
+
   applyTune(): void {
     this.world.gravity = { x: 0, y: -GRAVITY };
-    this.ballCollider.setMass(MASS);
-    this.ballCollider.setRadius(BIRD_R);
+    for (const shot of this.shots) {
+      shot.collider.setMass(MASS);
+      shot.collider.setRadius(BIRD_R);
+    }
     this.groundCollider.setTranslation({ x: 195, y: GROUND_Y - 16 });
   }
 
@@ -125,86 +167,127 @@ export class Sim {
     return new Sim();
   }
 
+  /** One-shot cues for the frame. Cleared on read. */
+  takeFeel(): Feel[] {
+    const out = this.feel;
+    this.feel = [];
+    return out;
+  }
+
   sample(): SimSample {
-    const p = this.bird.translation();
-    const dx = POUCH.x - p.x;
-    const dy = POUCH.y - p.y;
-    const pull = len(dx, dy);
-    const loaded = this.phase === 'pulling' || this.phase === 'launching';
+    const bags: BagSample[] = BAGS.map((_, i) => ({
+      sealed: this.sealed[i],
+      gone: this.gone[i],
+      give: 0,
+      pressX: 0,
+      pressY: 0,
+    }));
+    for (const shot of this.shots) {
+      if (shot.bag < 0 || shot.cloth.give <= bags[shot.bag].give) continue;
+      bags[shot.bag].give = shot.cloth.give;
+      bags[shot.bag].pressX = shot.cloth.nx;
+      bags[shot.bag].pressY = shot.cloth.ny;
+    }
     return {
-      phase: this.phase,
       hearts: this.hearts,
+      shots: this.shots.map((shot) => this.sampleShot(shot)),
+      bags,
+    };
+  }
+
+  private sampleShot(shot: Shot): ShotSample {
+    const p = shot.bird.translation();
+    const pouch = shot.sling.pouch;
+    const dx = pouch.x - p.x;
+    const dy = pouch.y - p.y;
+    const pull = len(dx, dy);
+    const loaded = shot.phase === 'pulling' || shot.phase === 'launching';
+    return {
+      phase: shot.phase,
       birdX: p.x,
       birdY: p.y,
-      ropeX: this.ropeX,
-      ropeY: this.ropeY,
-      band: this.band.points(),
+      band: shot.band.points(),
       strain: loaded ? Math.min(1, pull / MAX_PULL) : 0,
       aimX: pull > 1 ? dx / pull : 0,
       aimY: pull > 1 ? dy / pull : 1,
-      showBand: true,
-      bagSealed: this.bagSealed,
-      bagAsleep: this.bagAsleep,
-      bagGive: this.cloth.give,
-      bagPressX: this.cloth.nx,
-      bagPressY: this.cloth.ny,
     };
   }
 
   pointerDown(worldX: number, worldY: number): void {
-    const animation =
-      this.phase === 'launching' ||
-      this.phase === 'flying' ||
-      this.phase === 'catching' ||
-      this.phase === 'returning';
-    if (this.phase !== 'ready' && !animation) return;
-    const grab = animation ? POUCH : this.bird.translation();
-    if (len(worldX - grab.x, worldY - grab.y) > 90) return;
-    if (animation) this.restOnPouch();
-    this.phase = 'pulling';
-    this.movePull(worldX, worldY);
+    if (this.active !== null) return;
+    let best = -1;
+    let bestD = 90;
+    for (let i = 0; i < this.shots.length; i++) {
+      const shot = this.shots[i];
+      if (shot.phase !== 'ready' && !ANIMATION.has(shot.phase)) continue;
+      const grab = shot.phase === 'catching' ? shot.bird.translation() : ANIMATION.has(shot.phase) ? shot.sling.pouch : shot.bird.translation();
+      const d = len(worldX - grab.x, worldY - grab.y);
+      if (d <= bestD) {
+        best = i;
+        bestD = d;
+      }
+    }
+    if (best < 0) return;
+    const shot = this.shots[best];
+    if (shot.phase === 'catching') this.claimSling(shot);
+    else if (ANIMATION.has(shot.phase)) this.restOnPouch(shot);
+    shot.phase = 'pulling';
+    this.active = best;
+    this.feel.push('pull');
+    this.movePull(shot, worldX, worldY);
   }
 
   pointerMove(worldX: number, worldY: number): void {
-    if (this.phase !== 'pulling') return;
-    this.movePull(worldX, worldY);
+    if (this.active === null) return;
+    const shot = this.shots[this.active];
+    if (shot.phase !== 'pulling') return;
+    this.movePull(shot, worldX, worldY);
   }
 
   cancelPull(): void {
-    if (this.phase === 'pulling') this.restOnPouch();
+    if (this.active === null) return;
+    const shot = this.shots[this.active];
+    this.active = null;
+    if (shot.phase === 'pulling') this.restOnPouch(shot);
   }
 
   pointerUp(): void {
-    if (this.phase !== 'pulling') return;
-    const p = this.bird.translation();
-    const dx = POUCH.x - p.x;
-    const dy = POUCH.y - p.y;
+    if (this.active === null) return;
+    const shot = this.shots[this.active];
+    this.active = null;
+    if (shot.phase !== 'pulling') return;
+    const p = shot.bird.translation();
+    const pouch = shot.sling.pouch;
+    const dx = pouch.x - p.x;
+    const dy = pouch.y - p.y;
     const pull = len(dx, dy);
     if (pull < DEAD_PULL) {
-      this.restOnPouch();
+      this.restOnPouch(shot);
       return;
     }
-    this.drawn = pull;
-    this.dirX = dx / pull;
-    this.dirY = dy / pull;
-    this.ropeX = p.x;
-    this.ropeY = p.y;
-    this.ropeVx = 0;
-    this.ropeVy = 0;
-    this.band.holdTaut(p.x, p.y);
-    this.phase = 'launching';
+    shot.drawn = pull;
+    shot.dirX = dx / pull;
+    shot.dirY = dy / pull;
+    shot.ropeX = p.x;
+    shot.ropeY = p.y;
+    shot.ropeVx = 0;
+    shot.ropeVy = 0;
+    shot.band.holdTaut(p.x, p.y);
+    shot.phase = 'launching';
+    this.feel.push('launch');
   }
 
-  /** Test hook: fire from the pouch along a world-space velocity. */
-  launch(vx: number, vy: number): void {
-    this.restOnPouch();
-    this.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-    this.bird.setGravityScale(1, true);
-    this.bird.setLinvel({ x: vx, y: vy }, true);
-    this.clearOfBand = false;
-    this.prevX = POUCH.x;
-    this.prevY = POUCH.y;
-    this.phase = 'flying';
+  /** Test hook: fire one sling from its pouch. Index 1 is the middle. */
+  launch(vx: number, vy: number, index = 1): void {
+    const shot = this.shots[index];
+    this.restOnPouch(shot);
+    shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    shot.bird.setGravityScale(1, true);
+    shot.bird.setLinvel({ x: vx, y: vy }, true);
+    shot.clearOfBand = false;
+    shot.prevX = shot.sling.pouch.x;
+    shot.prevY = shot.sling.pouch.y;
+    shot.phase = 'flying';
   }
 
   advance(frameDt: number): void {
@@ -215,188 +298,262 @@ export class Sim {
     }
   }
 
-  private movePull(worldX: number, worldY: number): void {
-    let dx = worldX - POUCH.x;
-    let dy = worldY - POUCH.y;
+  private movePull(shot: Shot, worldX: number, worldY: number): void {
+    const pouch = shot.sling.pouch;
+    let dx = worldX - pouch.x;
+    let dy = worldY - pouch.y;
     const pull = len(dx, dy);
     if (pull > MAX_PULL && pull > 0) {
       const s = MAX_PULL / pull;
       dx *= s;
       dy *= s;
     }
-    let x = POUCH.x + dx;
-    let y = POUCH.y + dy;
+    let x = pouch.x + dx;
+    let y = pouch.y + dy;
     const minY = GROUND_Y + BIRD_R + 12;
-    x = Math.min(360, Math.max(30, x));
+    x = Math.min(366, Math.max(24, x));
     y = Math.min(800, Math.max(minY, y));
-    const meet = meetBallY(x);
-    const slip = slipBallY(x);
+    const meet = meetBallY(x, shot.sling);
+    const slip = slipBallY(x, shot.sling);
     if (y > slip) {
-      const here = this.bird.translation();
+      const here = shot.bird.translation();
       if (here.y >= slip - 0.5) {
-        this.slipOff(here.x, Math.min(here.y, slip));
+        this.slipOff(shot, here.x, Math.min(here.y, slip));
         return;
       }
       y = slip;
     }
-    this.bird.setNextKinematicTranslation({ x, y });
-    this.ropeX = x;
-    this.ropeY = y;
-    this.ropeVx = 0;
-    this.ropeVy = 0;
-    // Past the empty band the band stays there. The ball may still rise a little in the hand.
-    if (y > meet) this.band.holdAtRest();
-    else this.band.holdTaut(x, y);
-    this.world.step();
+    shot.bird.setNextKinematicTranslation({ x, y });
+    shot.ropeX = x;
+    shot.ropeY = y;
+    shot.ropeVx = 0;
+    shot.ropeVy = 0;
+    if (y > meet) shot.band.holdAtRest();
+    else shot.band.holdTaut(x, y);
   }
 
-  /**
-   * The finger kept going after the band was already straight.
-   * The ball drops from where it is. It is not a shot, and the finger cannot steer it.
-   */
-  private slipOff(x: number, y: number): void {
-    this.bird.setTranslation({ x, y }, true);
-    this.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-    this.bird.setGravityScale(1, true);
-    this.bird.setLinvel({ x: 0, y: 0 }, true);
-    this.band.holdAtRest();
-    this.clearOfBand = false;
-    this.prevX = x;
-    this.prevY = y;
-    this.phase = 'flying';
+  private slipOff(shot: Shot, x: number, y: number): void {
+    shot.bird.setTranslation({ x, y }, true);
+    shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    shot.bird.setGravityScale(1, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.band.holdAtRest();
+    shot.clearOfBand = false;
+    shot.prevX = x;
+    shot.prevY = y;
+    shot.phase = 'flying';
+    if (this.active !== null && this.shots[this.active] === shot) this.active = null;
+    this.feel.push('slip');
   }
 
-  /**
-   * The pouch retracts on the band's small mass, with the ball still in it.
-   * At rest length the ball leaves at the locked draw speed.
-   * The band points keep that speed and whip back on their rest lengths.
-   */
-  private stepLaunch(): void {
-    const ux = this.ropeX - POUCH.x;
-    const uy = this.ropeY - POUCH.y;
+  private stepLaunch(shot: Shot): void {
+    const pouch = shot.sling.pouch;
+    const ux = shot.ropeX - pouch.x;
+    const uy = shot.ropeY - pouch.y;
     const omega2 = STIFFNESS / ROPE_MASS;
-    const nvx = this.ropeVx + -omega2 * ux * STEP;
-    const nvy = this.ropeVy + -omega2 * uy * STEP;
-    const nx = this.ropeX + nvx * STEP;
-    const ny = this.ropeY + nvy * STEP;
-    const crossed = ux * (nx - POUCH.x) + uy * (ny - POUCH.y) <= 0;
-    this.ropeVx = nvx;
-    this.ropeVy = nvy;
+    const nvx = shot.ropeVx + -omega2 * ux * STEP;
+    const nvy = shot.ropeVy + -omega2 * uy * STEP;
+    const nx = shot.ropeX + nvx * STEP;
+    const ny = shot.ropeY + nvy * STEP;
+    const crossed = ux * (nx - pouch.x) + uy * (ny - pouch.y) <= 0;
+    shot.ropeVx = nvx;
+    shot.ropeVy = nvy;
     if (crossed) {
-      this.detach(nvx, nvy);
+      this.detach(shot, nvx, nvy);
       return;
     }
-    this.ropeX = nx;
-    this.ropeY = ny;
-    this.band.holdTaut(nx, ny);
-    this.bird.setNextKinematicTranslation({ x: nx, y: ny });
-    this.world.step();
+    shot.ropeX = nx;
+    shot.ropeY = ny;
+    shot.band.holdTaut(nx, ny);
+    shot.bird.setNextKinematicTranslation({ x: nx, y: ny });
   }
 
-  private detach(bandVx: number, bandVy: number): void {
-    const speed = this.drawn * Math.sqrt(STIFFNESS / MASS);
-    this.bird.setTranslation({ x: POUCH.x, y: POUCH.y }, true);
-    this.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-    this.bird.setGravityScale(1, true);
-    this.bird.setLinvel({ x: this.dirX * speed, y: this.dirY * speed }, true);
-    this.ropeX = POUCH.x;
-    this.ropeY = POUCH.y;
-    this.band.release(bandVx, bandVy, STEP);
-    this.clearOfBand = false;
-    this.prevX = POUCH.x;
-    this.prevY = POUCH.y;
-    this.phase = 'flying';
+  private detach(shot: Shot, bandVx: number, bandVy: number): void {
+    const pouch = shot.sling.pouch;
+    const speed = shot.drawn * Math.sqrt(STIFFNESS / MASS);
+    shot.bird.setTranslation({ x: pouch.x, y: pouch.y }, true);
+    shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    shot.bird.setGravityScale(1, true);
+    shot.bird.setLinvel({ x: shot.dirX * speed, y: shot.dirY * speed }, true);
+    shot.ropeX = pouch.x;
+    shot.ropeY = pouch.y;
+    shot.band.release(bandVx, bandVy, STEP);
+    shot.clearOfBand = false;
+    shot.prevX = pouch.x;
+    shot.prevY = pouch.y;
+    shot.phase = 'flying';
   }
 
-  private restOnPouch(): void {
-    this.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
-    this.bird.setLinvel({ x: 0, y: 0 }, true);
-    this.bird.setAngvel(0, true);
-    this.bird.setNextKinematicTranslation({ x: POUCH.x, y: POUCH.y });
-    this.ropeX = POUCH.x;
-    this.ropeY = POUCH.y;
-    this.ropeVx = 0;
-    this.ropeVy = 0;
-    this.band.holdSeated();
-    this.clearOfBand = false;
-    this.world.step();
-    this.phase = 'ready';
+  private restOnPouch(shot: Shot): void {
+    const pouch = shot.sling.pouch;
+    shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.bird.setAngvel(0, true);
+    shot.bird.setTranslation({ x: pouch.x, y: pouch.y }, true);
+    shot.bird.setNextKinematicTranslation({ x: pouch.x, y: pouch.y });
+    shot.ropeX = pouch.x;
+    shot.ropeY = pouch.y;
+    shot.ropeVx = 0;
+    shot.ropeVy = 0;
+    shot.band.holdSeated();
+    shot.clearOfBand = false;
+    shot.cloth = clearCloth();
+    shot.bag = -1;
+    shot.catchOn = -1;
+    shot.phase = 'ready';
   }
 
-  /**
-   * The ball stays on the band and keeps the speed it had at contact.
-   * The same stiffness pulls it into the pouch, so the band gives once and then holds.
-   */
-  private beginCatch(): void {
-    const v = this.bird.linvel();
-    this.catchVx = v.x;
-    this.catchVy = v.y;
-    this.phase = 'catching';
-    this.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
-    this.bird.setLinvel({ x: 0, y: 0 }, true);
-    this.bird.setGravityScale(0, true);
+  private beginCatch(shot: Shot, on: number): void {
+    const v = shot.bird.linvel();
+    shot.catchVx = v.x;
+    shot.catchVy = v.y;
+    shot.catchOn = on;
+    shot.phase = 'catching';
+    shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.bird.setGravityScale(0, true);
+    this.feel.push('catch');
   }
 
-  /**
-   * The bag gives like the rope: impact speed stays, stiffness pulls toward the seat.
-   * The seal is already shut. This step only plays the wobble.
-   */
-  private stepBag(): void {
-    const p = this.bird.translation();
-    const next = bagSpring(p.x, p.y, this.catchVx, this.catchVy);
-    this.catchVx = next.vx;
-    this.catchVy = next.vy;
-    this.bird.setNextKinematicTranslation({ x: next.x, y: next.y });
-    this.world.step();
+  private stepBag(shot: Shot): void {
+    const at = BAGS[shot.bag];
+    const p = shot.bird.translation();
+    const next = bagSpring(p.x, p.y, shot.catchVx, shot.catchVy, at);
+    shot.catchVx = next.vx;
+    shot.catchVy = next.vy;
+    shot.bird.setNextKinematicTranslation({ x: next.x, y: next.y });
     if (!next.rested) return;
-    const seat = bagSeat();
-    this.bird.setLinvel({ x: 0, y: 0 }, true);
-    this.bird.setTranslation({ x: seat.x, y: seat.y }, true);
-    this.bird.setBodyType(RAPIER.RigidBodyType.Fixed, true);
-    this.phase = 'asleep';
-    this.bagAsleep = true;
+    const seat = bagSeat(at);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.bird.setTranslation({ x: seat.x, y: seat.y }, true);
+    shot.bird.setNextKinematicTranslation({ x: seat.x, y: seat.y });
+    shot.bird.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+    shot.collider.setEnabled(false);
+    shot.phase = 'asleep';
+    this.gone[shot.bag] = true;
+    this.feel.push('asleep');
   }
 
-  /** Center crossed the opening from above. The bag takes this ball and shuts. */
-  private beginBag(): void {
-    const v = this.bird.linvel();
-    this.catchVx = v.x;
-    this.catchVy = v.y;
-    this.bagSealed = true;
-    this.phase = 'settling';
-    this.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
-    this.bird.setLinvel({ x: 0, y: 0 }, true);
-    this.bird.setGravityScale(0, true);
+  private beginBag(shot: Shot, bag: number): void {
+    const v = shot.bird.linvel();
+    shot.catchVx = v.x;
+    shot.catchVy = v.y;
+    shot.bag = bag;
+    shot.cloth = clearCloth();
+    this.sealed[bag] = true;
+    shot.phase = 'settling';
+    shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.bird.setGravityScale(0, true);
   }
 
-  private stepCatch(): void {
-    const p = this.bird.translation();
-    const ux = p.x - POUCH.x;
-    const uy = p.y - POUCH.y;
+  private stepCatch(shot: Shot): void {
+    const pouch = this.shots[shot.catchOn].sling.pouch;
+    const p = shot.bird.translation();
+    const ux = p.x - pouch.x;
+    const uy = p.y - pouch.y;
     const omega = Math.sqrt(STIFFNESS / MASS);
-    const ax = -omega * omega * ux - 2 * BAND_ZETA * omega * this.catchVx;
-    const ay = -omega * omega * uy - 2 * BAND_ZETA * omega * this.catchVy;
-    this.catchVx += ax * STEP;
-    this.catchVy += ay * STEP;
-    let x = p.x + this.catchVx * STEP;
-    let y = p.y + this.catchVy * STEP;
+    const ax = -omega * omega * ux - 2 * BAND_ZETA * omega * shot.catchVx;
+    const ay = -omega * omega * uy - 2 * BAND_ZETA * omega * shot.catchVy;
+    shot.catchVx += ax * STEP;
+    shot.catchVy += ay * STEP;
+    let x = p.x + shot.catchVx * STEP;
+    let y = p.y + shot.catchVy * STEP;
     const floor = GROUND_Y + BIRD_R;
     if (y < floor) {
       y = floor;
-      this.catchVy = 0;
+      shot.catchVy = 0;
     }
-    this.bird.setNextKinematicTranslation({ x, y });
-    this.band.holdUnder(x, y);
-    this.world.step();
-    // Only sit once the swing is already too small to see. A wider cutoff chops the last bounce.
-    if (len(x - POUCH.x, y - POUCH.y) < 0.4 && len(this.catchVx, this.catchVy) < 2) {
-      this.restOnPouch();
+    shot.bird.setNextKinematicTranslation({ x, y });
+    this.shots[shot.catchOn].band.holdUnder(x, y);
+    if (len(x - pouch.x, y - pouch.y) < 0.4 && len(shot.catchVx, shot.catchVy) < 2) {
+      this.claimSling(shot);
+      this.restOnPouch(shot);
     }
   }
 
-  private bandTouches(x0: number, y0: number, x1: number, y1: number): boolean {
+  /** The ball sits on the band that caught it. That band's old ball keeps the emptied sling. */
+  private claimSling(shot: Shot): void {
+    const self = this.shots.indexOf(shot);
+    const hostIndex = shot.catchOn;
+    if (hostIndex === self || hostIndex < 0) return;
+    const host = this.shots[hostIndex];
+    const sling = shot.sling;
+    const band = shot.band;
+    shot.sling = host.sling;
+    shot.band = host.band;
+    host.sling = sling;
+    host.band = band;
+    const pouch = host.sling.pouch;
+    host.ropeX = pouch.x;
+    host.ropeY = pouch.y;
+    host.ropeVx = 0;
+    host.ropeVy = 0;
+    host.band.holdAtRest();
+  }
+
+  /** A free band can take a ball. A band with a ball still on it, or in the hand, cannot. */
+  private canCatchOn(index: number): boolean {
+    const phase = this.shots[index].phase;
+    if (phase !== 'flying' && phase !== 'asleep' && phase !== 'gone') return false;
+    return !this.bandHeld(index);
+  }
+
+  /**
+   * A flying ball hitting a ball on a rope starts a catch-spring wobble.
+   * Speed along the contact normal sets how far that ball and its rope swing.
+   */
+  private knockSeated(flyer: Shot): void {
+    const p = flyer.bird.translation();
+    const v = flyer.bird.linvel();
+    const flyerIndex = this.shots.indexOf(flyer);
+    for (let i = 0; i < this.shots.length; i++) {
+      const seat = this.shots[i];
+      const key = `${flyerIndex}:${i}`;
+      if (seat === flyer || (seat.phase !== 'ready' && seat.phase !== 'catching')) {
+        this.knocks.delete(key);
+        continue;
+      }
+      if (seat.phase === 'catching' && seat.catchOn !== i) continue;
+      const q = seat.bird.translation();
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const reach = BIRD_R * 2 + 2;
+      if (dist > reach + 10) {
+        this.knocks.delete(key);
+        continue;
+      }
+      if (dist > reach || this.knocks.has(key)) continue;
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const approach = v.x * nx + v.y * ny;
+      if (approach < 80) continue;
+      this.knocks.add(key);
+      const kick = Math.min(approach, 1600) * 0.7;
+      if (seat.phase === 'ready') {
+        seat.catchVx = nx * kick;
+        seat.catchVy = ny * kick;
+        seat.catchOn = i;
+        seat.phase = 'catching';
+        seat.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+        seat.bird.setLinvel({ x: 0, y: 0 }, true);
+        seat.bird.setGravityScale(0, true);
+      } else {
+        seat.catchVx += nx * kick;
+        seat.catchVy += ny * kick;
+      }
+      this.feel.push('knock');
+    }
+  }
+
+  private bandHeld(index: number): boolean {
+    return this.shots.some((shot) => shot.phase === 'catching' && shot.catchOn === index);
+  }
+
+  private bandTouches(shot: Shot, x0: number, y0: number, x1: number, y1: number): boolean {
     const reach = BIRD_R + ROPE_THICKNESS / 2;
-    const pts = this.band.points();
+    const pts = shot.band.points();
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i];
       const b = pts[i + 1];
@@ -406,64 +563,61 @@ export class Sim {
   }
 
   private fixedStep(): void {
-    if (this.phase === 'launching') {
-      this.stepLaunch();
-      return;
+    for (const shot of this.shots) {
+      if (shot.phase === 'launching') this.stepLaunch(shot);
+      else if (shot.phase === 'catching') this.stepCatch(shot);
+      else if (shot.phase === 'settling') this.stepBag(shot);
+      else if (shot.phase !== 'pulling' && !this.bandHeld(this.shots.indexOf(shot))) shot.band.step(STEP);
     }
-    if (this.phase === 'catching') {
-      this.stepCatch();
-      return;
-    }
-    if (this.phase === 'settling') {
-      this.stepBag();
-      return;
-    }
-    this.band.step(STEP);
-
-    if (this.phase === 'pulling' || this.phase === 'ready' || this.phase === 'asleep' || this.phase === 'gone') {
-      return;
-    }
-
-    if (this.phase === 'returning') {
-      this.returnIn -= STEP;
-      if (this.returnIn <= 0) this.restOnPouch();
-      return;
-    }
-
     this.world.step();
-    const p = this.bird.translation();
-    const v = this.bird.linvel();
-    if (this.phase === 'flying') {
-      const fromX = this.prevX;
-      const fromY = this.prevY;
-      const touched = this.bandTouches(fromX, fromY, p.x, p.y);
-      this.prevX = p.x;
-      this.prevY = p.y;
-      // The empty band whips through the pouch while the ball is still leaving.
-      // That pass is not a catch. A catch is a touch after the ball has turned back.
-      const outward = (p.x - POUCH.x) * v.x + (p.y - POUCH.y) * v.y;
-      if (!touched && outward <= 0) this.clearOfBand = true;
-      else if (this.clearOfBand && touched) {
-        this.beginCatch();
-        return;
-      }
-      if (SHOW_BAG && this.meetBag(fromX, fromY, p.x, p.y)) return;
-      const hitGround = p.y - BIRD_R <= GROUND_Y + 2 && v.y <= 0;
-      const out = p.x < -40 || p.x > 430 || p.y > 900;
-      if (hitGround || out) this.miss();
+    for (const shot of this.shots) this.afterFly(shot);
+  }
+
+  private afterFly(shot: Shot): void {
+    if (shot.phase === 'returning') {
+      shot.returnIn -= STEP;
+      if (shot.returnIn <= 0) this.restOnPouch(shot);
+      return;
     }
+    if (shot.phase !== 'flying') return;
+    this.knockSeated(shot);
+    const p = shot.bird.translation();
+    const v = shot.bird.linvel();
+    const fromX = shot.prevX;
+    const fromY = shot.prevY;
+    const touched = this.bandTouches(shot, fromX, fromY, p.x, p.y);
+    shot.prevX = p.x;
+    shot.prevY = p.y;
+    const pouch = shot.sling.pouch;
+    const outward = (p.x - pouch.x) * v.x + (p.y - pouch.y) * v.y;
+    if (!touched && outward <= 0) shot.clearOfBand = true;
+    const self = this.shots.indexOf(shot);
+    if (shot.clearOfBand && touched) {
+      this.beginCatch(shot, self);
+      return;
+    }
+    for (let other = 0; other < this.shots.length; other++) {
+      if (other === self || !this.canCatchOn(other)) continue;
+      if (!this.bandTouches(this.shots[other], fromX, fromY, p.x, p.y)) continue;
+      this.beginCatch(shot, other);
+      return;
+    }
+    if (SHOW_BAG && this.meetBag(shot, fromX, fromY, p.x, p.y)) return;
+    const hitGround = p.y - BIRD_R <= GROUND_Y + 2 && v.y <= 0;
+    const out = p.x < -40 || p.x > 430 || p.y > 900;
+    if (hitGround || out) this.miss(shot);
   }
 
   /**
-   * Same plane as the ball. The outer contour blocks; the mouth is the only opening.
-   * Crossing the mouth downward seals. Any other contact pushes the ball back out.
+   * Same plane as the ball. Open bags are checked left to right.
+   * The first center to cross a mouth seals that bag.
    */
-  private meetBag(x0: number, y0: number, x1: number, y1: number): boolean {
-    if (this.cloth.on) {
-      const p = this.bird.translation();
-      const v = this.bird.linvel();
-      const moved = pushCloth(this.cloth, p.x, p.y, v.x, v.y);
-      this.applyCloth(moved);
+  private meetBag(shot: Shot, x0: number, y0: number, x1: number, y1: number): boolean {
+    if (shot.cloth.on) {
+      const p = shot.bird.translation();
+      const v = shot.bird.linvel();
+      const moved = pushCloth(shot.cloth, p.x, p.y, v.x, v.y);
+      this.applyCloth(shot, moved);
       if (moved.held) return true;
     }
     const travel = Math.hypot(x1 - x0, y1 - y0);
@@ -474,20 +628,34 @@ export class Sim {
       const t = i / steps;
       const bx = x0 + (x1 - x0) * t;
       const by = y0 + (y1 - y0) * t;
-      if (!this.bagSealed && enteredMouth(ax, ay, bx, by)) {
-        this.beginBag();
-        return true;
+      for (let bag = 0; bag < BAGS.length; bag++) {
+        if (this.gone[bag]) continue;
+        const at = BAGS[bag];
+        if (!this.sealed[bag] && enteredMouth(ax, ay, bx, by, at)) {
+          this.beginBag(shot, bag);
+          return true;
+        }
       }
-      if (!this.bagSealed && aboveOpenMouth(bx, by)) {
-        ax = bx;
-        ay = by;
-        continue;
+      let hitAt = -1;
+      let hit: ReturnType<typeof bagContact> = null;
+      for (let bag = 0; bag < BAGS.length; bag++) {
+        if (this.gone[bag]) continue;
+        const at = BAGS[bag];
+        if (!this.sealed[bag] && aboveOpenMouth(bx, by, at)) continue;
+        const found = bagContact(bx, by, this.sealed[bag], at);
+        if (!found) continue;
+        hitAt = bag;
+        hit = found;
+        break;
       }
-      const hit = bagContact(bx, by, this.bagSealed);
-      if (hit) {
-        const p = this.bird.translation();
-        const v = this.bird.linvel();
-        this.applyCloth(touchCloth(this.cloth, hit, p.x, p.y, v.x, v.y));
+      if (hit && hitAt >= 0) {
+        const was = shot.cloth.give;
+        const p = shot.bird.translation();
+        const v = shot.bird.linvel();
+        shot.bag = hitAt;
+        const moved = touchCloth(shot.cloth, hit, p.x, p.y, v.x, v.y);
+        this.applyCloth(shot, moved);
+        if (was === 0 && shot.cloth.give > 0) this.feel.push('give');
         return true;
       }
       ax = bx;
@@ -496,23 +664,27 @@ export class Sim {
     return false;
   }
 
-  private applyCloth(moved: { cloth: Cloth; x: number; y: number; vx: number; vy: number }): void {
-    this.cloth = moved.cloth;
-    this.bird.setTranslation({ x: moved.x, y: moved.y }, true);
-    this.bird.setLinvel({ x: moved.vx, y: moved.vy }, true);
-    this.prevX = moved.x;
-    this.prevY = moved.y;
+  private applyCloth(shot: Shot, moved: { cloth: Cloth; x: number; y: number; vx: number; vy: number }): void {
+    shot.cloth = moved.cloth;
+    if (!moved.cloth.on) shot.bag = -1;
+    shot.bird.setTranslation({ x: moved.x, y: moved.y }, true);
+    shot.bird.setLinvel({ x: moved.vx, y: moved.vy }, true);
+    shot.prevX = moved.x;
+    shot.prevY = moved.y;
   }
 
-  private miss(): void {
+  private miss(shot: Shot): void {
     this.hearts -= 1;
     if (this.hearts <= 0) {
-      this.phase = 'gone';
-      this.bird.setLinvel({ x: 0, y: 0 }, true);
+      shot.phase = 'gone';
+      shot.bird.setLinvel({ x: 0, y: 0 }, true);
+      shot.bird.setGravityScale(0, true);
+      this.feel.push('gone');
       return;
     }
-    this.phase = 'returning';
-    this.returnIn = 0.35;
+    shot.phase = 'returning';
+    shot.returnIn = 0.35;
+    this.feel.push('miss');
   }
 }
 
@@ -547,5 +719,3 @@ function segmentDistance(
   const py = ay + s * uy - (cy + t * vy);
   return Math.hypot(px, py);
 }
-
-export const SLING_ANCHORS = { left: ANCHOR_L, right: ANCHOR_R, mid: SLING_MID };

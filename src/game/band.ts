@@ -1,15 +1,12 @@
 import {
-  ANCHOR_L,
-  ANCHOR_R,
   BAND_ZETA,
   bandWidth,
   BIRD_R,
   emptyBandY,
   MAX_PULL,
-  POUCH,
   ROPE_MASS,
-  SLING_MID,
   STIFFNESS,
+  type Sling,
 } from './tune';
 
 /**
@@ -19,8 +16,8 @@ import {
  * A loose chain would fold, and a rubber band stays smooth.
  */
 
-const SIDE = 3;
-const ARC = 7;
+const SIDE = 4;
+const ARC = 20;
 export const BAND_COUNT = 2 * SIDE + ARC + 1;
 
 type Node = {
@@ -33,8 +30,8 @@ type Node = {
 };
 
 /** Centerline radius. The drawn inner edge lands on the ball, with a pixel of overlap so no seam shows. */
-function seatFor(ballX: number, ballY: number): number {
-  const pull = Math.hypot(ballX - POUCH.x, ballY - POUCH.y);
+function seatFor(ballX: number, ballY: number, sling: Sling): number {
+  const pull = Math.hypot(ballX - sling.pouch.x, ballY - sling.pouch.y);
   const strain = Math.min(1, pull / MAX_PULL);
   return BIRD_R + bandWidth(strain) / 2 - 1;
 }
@@ -83,23 +80,24 @@ function tangentCup(
   ballY: number,
   seat: number,
   cup: number,
+  sling: Sling,
 ): Array<{ x: number; y: number }> | null {
-  const lefts = tangents(ANCHOR_L.x, ANCHOR_L.y, ballX, ballY, seat);
-  const rights = tangents(ANCHOR_R.x, ANCHOR_R.y, ballX, ballY, seat);
+  const lefts = tangents(sling.left.x, sling.left.y, ballX, ballY, seat);
+  const rights = tangents(sling.right.x, sling.right.y, ballX, ballY, seat);
   if (!lefts || !rights) return null;
   let best: Array<{ x: number; y: number }> | null = null;
   let bestD = Infinity;
   for (const left of lefts) {
     for (const right of rights) {
-      if (lineHitsBall(ANCHOR_L.x, ANCHOR_L.y, left.x, left.y, ballX, ballY, seat)) continue;
-      if (lineHitsBall(ANCHOR_R.x, ANCHOR_R.y, right.x, right.y, ballX, ballY, seat)) continue;
-      if (linesCross(ANCHOR_L.x, ANCHOR_L.y, left.x, left.y, ANCHOR_R.x, ANCHOR_R.y, right.x, right.y)) continue;
+      if (lineHitsBall(sling.left.x, sling.left.y, left.x, left.y, ballX, ballY, seat)) continue;
+      if (lineHitsBall(sling.right.x, sling.right.y, right.x, right.y, ballX, ballY, seat)) continue;
+      if (linesCross(sling.left.x, sling.left.y, left.x, left.y, sling.right.x, sling.right.y, right.x, right.y)) continue;
       const sweep = sweepThrough(left.angle, right.angle, cup);
       if (Math.abs(sweep.span) > Math.PI + 0.15) continue;
       const mid = sweep.start + sweep.span / 2;
       const d = angDist(mid, cup);
       if (d >= bestD) continue;
-      const pose = poseFrom(ballX, ballY, seat, left, right, sweep);
+      const pose = poseFrom(ballX, ballY, seat, left, right, sweep, sling);
       if (polylineCross(pose)) continue;
       bestD = d;
       best = pose;
@@ -164,13 +162,14 @@ function poseFrom(
   left: { x: number; y: number; angle: number },
   right: { x: number; y: number; angle: number },
   sweep: { start: number; span: number },
+  sling: Sling,
 ): Array<{ x: number; y: number }> {
   const pose: Array<{ x: number; y: number }> = [];
   for (let i = 0; i <= SIDE; i++) {
     const t = i / SIDE;
     pose.push({
-      x: ANCHOR_L.x + (left.x - ANCHOR_L.x) * t,
-      y: ANCHOR_L.y + (left.y - ANCHOR_L.y) * t,
+      x: sling.left.x + (left.x - sling.left.x) * t,
+      y: sling.left.y + (left.y - sling.left.y) * t,
     });
   }
   for (let i = 1; i < ARC; i++) {
@@ -180,15 +179,15 @@ function poseFrom(
   for (let i = 0; i <= SIDE; i++) {
     const t = i / SIDE;
     pose.push({
-      x: right.x + (ANCHOR_R.x - right.x) * t,
-      y: right.y + (ANCHOR_R.y - right.y) * t,
+      x: right.x + (sling.right.x - right.x) * t,
+      y: right.y + (sling.right.y - right.y) * t,
     });
   }
   return pose;
 }
 
 /** Cup centered on `angle`. Shrinks until the two sides neither cross nor cut through the ball. */
-function cupAt(ballX: number, ballY: number, seat: number, angle: number): Array<{ x: number; y: number }> {
+function cupAt(ballX: number, ballY: number, seat: number, angle: number, sling: Sling): Array<{ x: number; y: number }> {
   let beta = 1.15;
   while (beta >= 0) {
     const left = {
@@ -201,24 +200,24 @@ function cupAt(ballX: number, ballY: number, seat: number, angle: number): Array
       y: ballY + Math.sin(angle + beta) * seat,
       angle: angle + beta,
     };
-    const pose = poseFrom(ballX, ballY, seat, left, right, { start: left.angle, span: beta * 2 });
+    const pose = poseFrom(ballX, ballY, seat, left, right, { start: left.angle, span: beta * 2 }, sling);
     const clear =
-      !lineHitsBall(ANCHOR_L.x, ANCHOR_L.y, left.x, left.y, ballX, ballY, seat) &&
-      !lineHitsBall(ANCHOR_R.x, ANCHOR_R.y, right.x, right.y, ballX, ballY, seat) &&
-      !linesCross(ANCHOR_L.x, ANCHOR_L.y, left.x, left.y, ANCHOR_R.x, ANCHOR_R.y, right.x, right.y) &&
+      !lineHitsBall(sling.left.x, sling.left.y, left.x, left.y, ballX, ballY, seat) &&
+      !lineHitsBall(sling.right.x, sling.right.y, right.x, right.y, ballX, ballY, seat) &&
+      !linesCross(sling.left.x, sling.left.y, left.x, left.y, sling.right.x, sling.right.y, right.x, right.y) &&
       !polylineCross(pose);
     if (clear || beta === 0) {
-      return poseFrom(ballX, ballY, seat, left, right, { start: left.angle, span: beta * 2 });
+      return poseFrom(ballX, ballY, seat, left, right, { start: left.angle, span: beta * 2 }, sling);
     }
     beta = beta < 0.08 ? 0 : beta * 0.72;
   }
   const tip = { x: ballX + Math.cos(angle) * seat, y: ballY + Math.sin(angle) * seat, angle };
-  return poseFrom(ballX, ballY, seat, tip, tip, { start: angle, span: 0 });
+  return poseFrom(ballX, ballY, seat, tip, tip, { start: angle, span: 0 }, sling);
 }
 
-function restAt(t: number): { x: number; y: number } {
-  const x = ANCHOR_L.x + (ANCHOR_R.x - ANCHOR_L.x) * t;
-  return { x, y: emptyBandY(x) };
+function restAt(t: number, sling: Sling): { x: number; y: number } {
+  const x = sling.left.x + (sling.right.x - sling.left.x) * t;
+  return { x, y: emptyBandY(x, sling) };
 }
 
 export class Band {
@@ -232,10 +231,10 @@ export class Band {
   private cupAngle = -Math.PI / 2;
   live = false;
 
-  constructor() {
+  constructor(private readonly sling: Sling) {
     this.nodes = [];
     for (let i = 0; i < BAND_COUNT; i++) {
-      const empty = restAt(i / (BAND_COUNT - 1));
+      const empty = restAt(i / (BAND_COUNT - 1), sling);
       this.nodes.push({ x: empty.x, y: empty.y, px: empty.x, py: empty.y, rx: empty.x, ry: empty.y });
     }
     this.holdSeated();
@@ -263,7 +262,7 @@ export class Band {
   holdSeated(): void {
     this.live = false;
     this.cupAngle = -Math.PI / 2;
-    this.writePose(this.cradle(POUCH.x, POUCH.y, false));
+    this.writePose(this.cradle(this.sling.pouch.x, this.sling.pouch.y, false));
   }
 
   /** Catch. The cup turns with the ball, a little at a time, so the arc does not flip. */
@@ -284,8 +283,8 @@ export class Band {
    * `ease` limits how fast the cup can rotate, used while a catch is settling.
    */
   private cradle(ballX: number, ballY: number, ease: boolean): Array<{ x: number; y: number }> {
-    const dx = ballX - SLING_MID.x;
-    const dy = ballY - SLING_MID.y;
+    const dx = ballX - this.sling.mid.x;
+    const dy = ballY - this.sling.mid.y;
     const dist = Math.hypot(dx, dy);
     const pull = Math.min(1, Math.max(0, (dist - 10) / 36));
     const px = dist > 1 ? dx / dist : 0;
@@ -295,14 +294,14 @@ export class Band {
     let target = Math.atan2(ty, tx);
     // Between the anchors, any lift keeps the cradle under the ball.
     // The blended aim can still point downhill for a frame, and that frame hooks over the crown.
-    const between = ballX > ANCHOR_L.x && ballX < ANCHOR_R.x;
-    if (between && ballY > POUCH.y) target = -Math.PI / 2;
+    const between = ballX > this.sling.left.x && ballX < this.sling.right.x;
+    if (between && ballY > this.sling.pouch.y) target = -Math.PI / 2;
     let delta = target - this.cupAngle;
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;
     this.cupAngle += ease ? delta * 0.28 : delta;
-    const seat = seatFor(ballX, ballY);
-    return tangentCup(ballX, ballY, seat, this.cupAngle) ?? cupAt(ballX, ballY, seat, this.cupAngle);
+    const seat = seatFor(ballX, ballY, this.sling);
+    return tangentCup(ballX, ballY, seat, this.cupAngle, this.sling) ?? cupAt(ballX, ballY, seat, this.cupAngle, this.sling);
   }
 
   private writePose(pose: Array<{ x: number; y: number }>): void {

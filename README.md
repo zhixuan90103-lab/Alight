@@ -10,8 +10,8 @@
 | [docs/MERGE.md](./docs/MERGE.md) | 双工程优点对照与合并说明 |
 | [docs/AUDIO.md](./docs/AUDIO.md) | 音效方案（预解码 + 每帧一批 + 原生池） |
 | [docs/HAPTICS.md](./docs/HAPTICS.md) | 震动如何一次接对（插件注册 + 玩法层） |
-| [docs/GAME-RULES.md](./docs/GAME-RULES.md) | 规则：球、皮筋、口袋。这一版和以后分开写 |
-| [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md) | 这一版怎么做：数、皮筋、口袋 |
+| [docs/GAME-RULES.md](./docs/GAME-RULES.md) | 规则。第 0 节是操作优先 |
+| [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md) | 这一版怎么做：三球、三皮筋、三口袋、数 |
 
 ## 30 秒上手
 
@@ -22,7 +22,7 @@ npm run dev
 # → http://127.0.0.1:5190/
 ```
 
-应看到：桌面手机框、紫色立方体、safe/scale 状态、右上角 **手机/Pad** 切换、底部 **点我震动**。桌面无原生马达，属正常。
+应看到：桌面手机框、三颗球和三只口袋、safe/scale 状态、右上角 **手机/Pad** 切换、底部 **点我震动**。桌面无原生马达，属正常。
 
 ## 合并了什么
 

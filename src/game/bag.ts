@@ -37,13 +37,13 @@ export function bagDepth(): number {
 }
 
 /** Mouth center. The opening faces up. */
-export function bagMouth(): { x: number; y: number } {
-  return { x: BAG_AT.x, y: BAG_AT.y + BIRD_R + 10 };
+export function bagMouth(at: { x: number; y: number } = BAG_AT): { x: number; y: number } {
+  return { x: at.x, y: at.y + BIRD_R + 10 };
 }
 
 /** Rest point, one radius above the inner bottom. */
-export function bagSeat(): { x: number; y: number } {
-  const mouth = bagMouth();
+export function bagSeat(at: { x: number; y: number } = BAG_AT): { x: number; y: number } {
+  const mouth = bagMouth(at);
   return { x: mouth.x, y: mouth.y - (bagDepth() - BIRD_R - SEAT_PAD) };
 }
 
@@ -51,8 +51,8 @@ export function bagSeat(): { x: number; y: number } {
  * U-shaped outline, mouth open between the first point and the last.
  * The view fills this same line. There is no extra lip.
  */
-export function bagOuterPoints(): Array<{ x: number; y: number }> {
-  const mouth = bagMouth();
+export function bagOuterPoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
+  const mouth = bagMouth(at);
   const bulge = bagMouthHalf() + SIDE_BULGE;
   const side = Math.max(8, bagDepth() - bulge);
   const points: Array<{ x: number; y: number }> = [];
@@ -70,16 +70,16 @@ export function bagOuterPoints(): Array<{ x: number; y: number }> {
   return points;
 }
 
-export function aboveOpenMouth(x: number, y: number): boolean {
-  const pts = bagOuterPoints();
+export function aboveOpenMouth(x: number, y: number, at: { x: number; y: number } = BAG_AT): boolean {
+  const pts = bagOuterPoints(at);
   const left = pts[0];
   const right = pts[pts.length - 1];
   return y >= left.y && x > left.x && x < right.x;
 }
 
 /** Center fell across the opening. The side walls stay solid. */
-export function enteredMouth(x0: number, y0: number, x1: number, y1: number): boolean {
-  const pts = bagOuterPoints();
+export function enteredMouth(x0: number, y0: number, x1: number, y1: number, at: { x: number; y: number } = BAG_AT): boolean {
+  const pts = bagOuterPoints(at);
   const left = pts[0];
   const right = pts[pts.length - 1];
   const mouthY = left.y;
@@ -105,8 +105,8 @@ function pointInBag(px: number, py: number, pts: ReadonlyArray<{ x: number; y: n
 }
 
 /** Nearest overlap with the outline. The mouth edge exists only after the bag is sealed. */
-export function bagContact(px: number, py: number, sealed: boolean): BagHit | null {
-  const pts = bagOuterPoints();
+export function bagContact(px: number, py: number, sealed: boolean, at: { x: number; y: number } = BAG_AT): BagHit | null {
+  const pts = bagOuterPoints(at);
   const inside = pointInBag(px, py, pts);
   const edges = sealed ? pts.length : pts.length - 1;
   let best: BagHit | null = null;
@@ -185,8 +185,8 @@ function leaveCloth(cloth: Cloth, x: number, y: number, vx: number, vy: number):
 }
 
 /** Seat spring. Same stiffness as the band, bag damping instead of band damping. */
-export function bagSpring(x: number, y: number, vx: number, vy: number): { x: number; y: number; vx: number; vy: number; rested: boolean } {
-  const seat = bagSeat();
+export function bagSpring(x: number, y: number, vx: number, vy: number, at: { x: number; y: number } = BAG_AT): { x: number; y: number; vx: number; vy: number; rested: boolean } {
+  const seat = bagSeat(at);
   const ux = x - seat.x;
   const uy = y - seat.y;
   const omega = Math.sqrt(STIFFNESS / MASS);

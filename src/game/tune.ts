@@ -1,6 +1,6 @@
 import { designToWorld } from './frame';
 
-/** Pixel-space tune for one light ball, one band, and one bag. */
+/** Pixel-space tune for three light balls, three bands, and three bags. */
 /** World gravity, in design pixels per second squared. Not 9.8. */
 export let GRAVITY = 3800;
 /** Base mass. The light ball is 1. Heavier balls are multiples of this. */
@@ -38,15 +38,40 @@ export function bandWidth(strain: number): number {
  * and the rope dips under the ball. Heavier balls use the same rope and hang lower.
  */
 const CRADLE_RISE = 12;
-const CRADLE_REACH = 54;
 
 export const POUCH = designToWorld(195, 612);
-export const ANCHOR_L = { x: POUCH.x - CRADLE_REACH, y: POUCH.y + CRADLE_RISE };
-export const ANCHOR_R = { x: POUCH.x + CRADLE_REACH, y: POUCH.y + CRADLE_RISE };
-export const SLING_MID = {
-  x: (ANCHOR_L.x + ANCHOR_R.x) / 2,
-  y: (ANCHOR_L.y + ANCHOR_R.y) / 2,
+
+export type Sling = {
+  pouch: { x: number; y: number };
+  left: { x: number; y: number };
+  right: { x: number; y: number };
+  mid: { x: number; y: number };
 };
+
+/** Three pouches in a row. Each cradle is narrow enough that the neighbors do not overlap. */
+export const LANE_X = [78, 195, 312];
+const LANE_REACH = 40;
+
+export function slingAt(x: number): Sling {
+  const pouch = { x, y: POUCH.y };
+  const left = { x: x - LANE_REACH, y: pouch.y + CRADLE_RISE };
+  const right = { x: x + LANE_REACH, y: pouch.y + CRADLE_RISE };
+  return {
+    pouch,
+    left,
+    right,
+    mid: { x, y: (left.y + right.y) / 2 },
+  };
+}
+
+export const SLINGS = LANE_X.map(slingAt);
+/** Three bags, one above each pouch. The middle mouth sits lower. Each holds one ball. */
+export const BAG_Y = [268, 428, 268];
+export const BAGS = LANE_X.map((x, i) => designToWorld(x, BAG_Y[i]));
+
+export const ANCHOR_L = SLINGS[1].left;
+export const ANCHOR_R = SLINGS[1].right;
+export const SLING_MID = SLINGS[1].mid;
 
 export function restSag(mass: number): number {
   return (mass * GRAVITY) / STIFFNESS;
@@ -58,8 +83,8 @@ export let EMPTY_SAG = restSag(ROPE_MASS);
 export const STEP = 1 / 60;
 export const MAX_CATCHUP = 0.25;
 
-/** Design point the bag hangs from. Mouth and seat are derived in bag.ts. */
-export const BAG_AT = designToWorld(70, 250);
+/** Design point of the middle bag. The row lives in BAGS. */
+export const BAG_AT = BAGS[1];
 /** Turn the blue bag off to shoot with no target. On by default. */
 export let SHOW_BAG = true;
 
@@ -113,25 +138,25 @@ export function writeTune(patch: TunePatch): void {
 }
 
 /** Empty-band height at this x. Outside the anchors the curve is the anchor height. */
-export function emptyBandY(x: number): number {
-  const span = ANCHOR_R.x - ANCHOR_L.x;
-  const t = Math.min(1, Math.max(0, (x - ANCHOR_L.x) / span));
-  return SLING_MID.y - EMPTY_SAG * 4 * t * (1 - t);
+export function emptyBandY(x: number, sling: Sling = SLINGS[1]): number {
+  const span = sling.right.x - sling.left.x;
+  const t = Math.min(1, Math.max(0, (x - sling.left.x) / span));
+  return sling.mid.y - EMPTY_SAG * 4 * t * (1 - t);
 }
 
-function seatAt(x: number, y: number): number {
-  const pull = Math.hypot(x - POUCH.x, y - POUCH.y);
+function seatAt(x: number, y: number, sling: Sling): number {
+  const pull = Math.hypot(x - sling.pouch.x, y - sling.pouch.y);
   const strain = Math.min(1, pull / MAX_PULL);
   return BIRD_R + bandWidth(strain) / 2 - 1;
 }
 
 /** Ball center when it is just sitting on the empty band. */
-export function meetBallY(x: number): number {
-  const y = emptyBandY(x) + BIRD_R;
-  return emptyBandY(x) + seatAt(x, y);
+export function meetBallY(x: number, sling: Sling = SLINGS[1]): number {
+  const y = emptyBandY(x, sling) + BIRD_R;
+  return emptyBandY(x, sling) + seatAt(x, y, sling);
 }
 
 /** Ball center where an upward drag lets go. A little above the empty band. */
-export function slipBallY(x: number): number {
-  return meetBallY(x) + SLIP_LIFT;
+export function slipBallY(x: number, sling: Sling = SLINGS[1]): number {
+  return meetBallY(x, sling) + SLIP_LIFT;
 }

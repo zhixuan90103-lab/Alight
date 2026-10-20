@@ -3,12 +3,14 @@ import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 import { BAND_COUNT } from './band';
 import { bagDepth, bagMouth, bagMouthHalf, bagOuterPoints } from './bag';
 import {
+  BAGS,
   bandWidth,
   BIRD_R,
   GROUND_Y,
   SHOW_BAG,
+  SLINGS,
 } from './tune';
-import { SLING_ANCHORS, type Sim } from './sim';
+import type { Sim } from './sim';
 
 function circle(radius: number, color: number): THREE.Mesh {
   const mesh = new THREE.Mesh(
@@ -119,43 +121,57 @@ export function createPlayView(scene: THREE.Scene): {
     side: THREE.DoubleSide,
     depthWrite: false,
   });
-  const bag = new THREE.Mesh(bagGeometry(), bagMat);
-  bag.renderOrder = 3;
-  const seal = new THREE.Mesh(new THREE.PlaneGeometry(1, 6), sealMat);
-  seal.renderOrder = 4;
-  scene.add(bag, seal);
+  const bags = BAGS.map(() => {
+    const mesh = new THREE.Mesh(bagGeometry(), bagMat);
+    mesh.renderOrder = 3;
+    scene.add(mesh);
+    return mesh;
+  });
+  const seals = BAGS.map(() => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 6), sealMat);
+    mesh.renderOrder = 4;
+    scene.add(mesh);
+    return mesh;
+  });
   let bagKey = -1;
 
   const postMat = new THREE.MeshBasicMaterial({ color: ROPE });
-  const postL = circle(6, ROPE);
-  const postR = circle(6, ROPE);
-  postL.position.set(SLING_ANCHORS.left.x, SLING_ANCHORS.left.y, 0.4);
-  postR.position.set(SLING_ANCHORS.right.x, SLING_ANCHORS.right.y, 0.4);
-  postL.material = postMat;
-  postR.material = postMat;
-  scene.add(postL, postR);
-
-  const arcPositions = new Float32Array(BAND_COUNT * 2 * 3);
-  const arcGeom = new THREE.BufferGeometry();
-  arcGeom.setAttribute('position', new THREE.BufferAttribute(arcPositions, 3));
-  const arcIndex: number[] = [];
-  for (let i = 0; i < BAND_COUNT - 1; i++) {
-    const a = i * 2;
-    arcIndex.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  for (const sling of SLINGS) {
+    for (const post of [sling.left, sling.right]) {
+      const mesh = circle(6, ROPE);
+      mesh.position.set(post.x, post.y, 0.4);
+      mesh.material = postMat;
+      scene.add(mesh);
+    }
   }
-  arcGeom.setIndex(arcIndex);
-  const arc = new THREE.Mesh(arcGeom, new THREE.MeshBasicMaterial({ color: ROPE, side: THREE.DoubleSide }));
-  arc.frustumCulled = false;
-  arc.renderOrder = 1;
-  scene.add(arc);
 
-  const body = circle(BIRD_R, BALL);
-  const highlight = circle(BIRD_R * 0.38, BALL_LIGHT);
-  highlight.position.set(-7, 8, 0.2);
-  const ball = new THREE.Group();
-  ball.add(body, highlight);
-  ball.renderOrder = 2;
-  scene.add(ball);
+  const arcs = SLINGS.map(() => {
+    const positions = new Float32Array(BAND_COUNT * 2 * 3);
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const index: number[] = [];
+    for (let i = 0; i < BAND_COUNT - 1; i++) {
+      const a = i * 2;
+      index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    geom.setIndex(index);
+    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: ROPE, side: THREE.DoubleSide }));
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+    return mesh;
+  });
+
+  const balls = SLINGS.map(() => {
+    const body = circle(BIRD_R, BALL);
+    const highlight = circle(BIRD_R * 0.38, BALL_LIGHT);
+    highlight.position.set(-7, 8, 0.2);
+    const group = new THREE.Group();
+    group.add(body, highlight);
+    group.renderOrder = 2;
+    scene.add(group);
+    return group;
+  });
   let hum = 0;
 
   return {
@@ -163,34 +179,44 @@ export function createPlayView(scene: THREE.Scene): {
     sync(sim: Sim, dt: number) {
       const s = sim.sample();
       hum += dt;
-      const atMax = s.phase === 'pulling' && s.strain >= 0.995;
-      const amp = atMax ? Math.sin(hum * 64) * 1.6 : 0;
-      ball.position.set(s.birdX + s.aimX * amp, s.birdY + s.aimY * amp, 1);
-      ball.visible = s.phase !== 'gone';
-      const radius = BIRD_R / 26;
-      ball.scale.set(radius, radius, 1);
-      const mouth = bagMouth();
       const half = bagMouthHalf();
       const key = half * 1000 + bagDepth();
       if (key !== bagKey) {
         bagKey = key;
-        bag.geometry.dispose();
-        bag.geometry = bagGeometry();
+        for (const bag of bags) {
+          bag.geometry.dispose();
+          bag.geometry = bagGeometry();
+        }
       }
-      bag.visible = SHOW_BAG;
-      seal.visible = SHOW_BAG && s.bagSealed;
-      const giveX = s.bagPressX * s.bagGive * 0.55;
-      const giveY = s.bagPressY * s.bagGive * 0.55;
-      bag.position.set(mouth.x - giveX, mouth.y - giveY, 0.2);
-      seal.position.set(mouth.x, mouth.y - 1, 0.4);
-      seal.scale.set(half * 2 + 10, 1, 1);
+      for (let i = 0; i < bags.length; i++) {
+        const mouth = bagMouth(BAGS[i]);
+        const bagState = s.bags[i];
+        const giveX = bagState.pressX * bagState.give * 0.55;
+        const giveY = bagState.pressY * bagState.give * 0.55;
+        const here = SHOW_BAG && !bagState.gone;
+        bags[i].visible = here;
+        bags[i].position.set(mouth.x - giveX, mouth.y - giveY, 0.2);
+        seals[i].visible = here && bagState.sealed;
+        seals[i].position.set(mouth.x, mouth.y - 1, 0.4);
+        seals[i].scale.set(half * 2 + 10, 1, 1);
+      }
       ground.scale.y = GROUND_Y / groundH;
       ground.position.y = GROUND_Y / 2;
 
-      const points = amp === 0 ? s.band : humAlongForce(s.band, s.birdX, s.birdY, s.aimX, s.aimY, amp);
-      const attr = arcGeom.getAttribute('position') as THREE.BufferAttribute;
-      writeStrip(attr.array as Float32Array, points, bandWidth(s.strain));
-      attr.needsUpdate = true;
+      for (let i = 0; i < s.shots.length; i++) {
+        const shot = s.shots[i];
+        const atMax = shot.phase === 'pulling' && shot.strain >= 0.995;
+        const amp = atMax ? Math.sin(hum * 64) * 1.6 : 0;
+        const ball = balls[i];
+        ball.position.set(shot.birdX + shot.aimX * amp, shot.birdY + shot.aimY * amp, 1);
+        ball.visible = shot.phase !== 'gone' && shot.phase !== 'asleep';
+        const radius = BIRD_R / 26;
+        ball.scale.set(radius, radius, 1);
+        const points = amp === 0 ? shot.band : humAlongForce(shot.band, shot.birdX, shot.birdY, shot.aimX, shot.aimY, amp);
+        const attr = arcs[i].geometry.getAttribute('position') as THREE.BufferAttribute;
+        writeStrip(attr.array as Float32Array, points, bandWidth(shot.strain));
+        attr.needsUpdate = true;
+      }
     },
   };
 }

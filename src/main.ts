@@ -55,8 +55,6 @@ async function boot(): Promise<void> {
 
   let preview: DevicePreviewController;
   let pointerId: number | null = null;
-  let lastPhase = sim.phase;
-  let lastGive = sim.bagGive;
 
   const onLayout = (layout: StageLayout) => {
     applyStageTransform(stage, layout);
@@ -94,9 +92,7 @@ async function boot(): Promise<void> {
     const world = designPoint(event);
     if (!world) return;
     pointerId = event.pointerId;
-    const before = sim.phase;
     sim.pointerDown(world.x, world.y);
-    if (sim.phase === 'pulling' && before !== 'pulling') void haptics.impact('light');
   });
 
   window.addEventListener('pointermove', (event) => {
@@ -104,17 +100,13 @@ async function boot(): Promise<void> {
     if (event.pointerId !== pointerId) return;
     const world = designPoint(event);
     if (!world) return;
-    const before = sim.phase;
     sim.pointerMove(world.x, world.y);
-    if (before === 'pulling' && sim.phase === 'flying') void haptics.impact('rigid');
   });
 
   const endPointer = (event: PointerEvent) => {
     if (event.pointerId !== pointerId) return;
     pointerId = null;
-    const before = sim.phase;
     sim.pointerUp();
-    if (before === 'pulling' && sim.phase === 'launching') void haptics.impact('medium');
   };
   window.addEventListener('pointerup', endPointer);
   window.addEventListener('pointercancel', (event) => {
@@ -129,15 +121,13 @@ async function boot(): Promise<void> {
     const dt = Math.min((now - last) / 1000, 0.25);
     last = now;
     sim.advance(dt);
-    if (sim.phase !== lastPhase) {
-      if (sim.phase === 'catching') void haptics.impact('light');
-      if (sim.phase === 'asleep') void haptics.impact('heavy');
-      if (sim.phase === 'returning' || sim.phase === 'gone') void haptics.impact('rigid');
-      lastPhase = sim.phase;
-      paintHearts(sim.hearts);
+    for (const cue of sim.takeFeel()) {
+      if (cue === 'pull' || cue === 'catch' || cue === 'give' || cue === 'knock') void haptics.impact('light');
+      if (cue === 'launch') void haptics.impact('medium');
+      if (cue === 'asleep') void haptics.impact('heavy');
+      if (cue === 'slip' || cue === 'miss' || cue === 'gone') void haptics.impact('rigid');
+      if (cue === 'miss' || cue === 'gone') paintHearts(sim.hearts);
     }
-    if (sim.bagGive > 0 && lastGive === 0) void haptics.impact('light');
-    lastGive = sim.bagGive;
     view.sync(sim, dt);
     renderer.render(scene, view.camera);
   });

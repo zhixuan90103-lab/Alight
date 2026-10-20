@@ -63,7 +63,7 @@ npm run ios
 
 ## 业务怎么加
 
-- 玩法：按 `docs/GAME-RULES.md` 与 `docs/IMPLEMENTATION.md`，改 `src/main.ts` 或 `src/game/*`  
+- 玩法：按 `docs/GAME-RULES.md` 与 `docs/IMPLEMENTATION.md`，改 `src/main.ts` 或 `src/game/*`。操作优先是高优先级：只有规则结算能禁止这一颗球的操作，其他动画都允许玩家打断（`GAME-RULES.md` 第 0 节）  
 - 保留：adapt / create-renderer / haptics / plugins / `base`  
 - 触控：`clientToDesign` + 忽略 letterbox 外  
 - 音效：按 `docs/AUDIO.md` 接入；禁止热路径 `new Audio()` / 每发一次桥  
