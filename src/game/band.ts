@@ -93,7 +93,7 @@ function tangentCup(
       if (lineHitsBall(sling.right.x, sling.right.y, right.x, right.y, ballX, ballY, seat)) continue;
       if (linesCross(sling.left.x, sling.left.y, left.x, left.y, sling.right.x, sling.right.y, right.x, right.y)) continue;
       const sweep = sweepThrough(left.angle, right.angle, cup);
-      if (Math.abs(sweep.span) > Math.PI + 0.15) continue;
+      if (Math.abs(sweep.span) > Math.PI + 0.35) continue;
       const mid = sweep.start + sweep.span / 2;
       const d = angDist(mid, cup);
       if (d >= bestD) continue;
@@ -186,33 +186,102 @@ function poseFrom(
   return pose;
 }
 
-/** Cup centered on `angle`. Shrinks until the two sides neither cross nor cut through the ball. */
-function cupAt(ballX: number, ballY: number, seat: number, angle: number, sling: Sling): Array<{ x: number; y: number }> {
-  let beta = 1.15;
-  while (beta >= 0) {
-    const left = {
-      x: ballX + Math.cos(angle - beta) * seat,
-      y: ballY + Math.sin(angle - beta) * seat,
-      angle: angle - beta,
-    };
-    const right = {
-      x: ballX + Math.cos(angle + beta) * seat,
-      y: ballY + Math.sin(angle + beta) * seat,
-      angle: angle + beta,
-    };
-    const pose = poseFrom(ballX, ballY, seat, left, right, { start: left.angle, span: beta * 2 }, sling);
-    const clear =
-      !lineHitsBall(sling.left.x, sling.left.y, left.x, left.y, ballX, ballY, seat) &&
-      !lineHitsBall(sling.right.x, sling.right.y, right.x, right.y, ballX, ballY, seat) &&
-      !linesCross(sling.left.x, sling.left.y, left.x, left.y, sling.right.x, sling.right.y, right.x, right.y) &&
-      !polylineCross(pose);
-    if (clear || beta === 0) {
-      return poseFrom(ballX, ballY, seat, left, right, { start: left.angle, span: beta * 2 }, sling);
+/** The tangent on this post that faces the cup. A post inside the ball has none. */
+function attach(
+  anchorX: number,
+  anchorY: number,
+  ballX: number,
+  ballY: number,
+  seat: number,
+  cup: number,
+): { x: number; y: number; angle: number } | null {
+  const pair = tangents(anchorX, anchorY, ballX, ballY, seat);
+  if (!pair) return null;
+  let best: { x: number; y: number; angle: number } | null = null;
+  let bestD = Infinity;
+  for (const hit of pair) {
+    if (lineHitsBall(anchorX, anchorY, hit.x, hit.y, ballX, ballY, seat)) continue;
+    const d = angDist(hit.angle, cup);
+    if (d < bestD) {
+      best = hit;
+      bestD = d;
     }
-    beta = beta < 0.08 ? 0 : beta * 0.72;
   }
-  const tip = { x: ballX + Math.cos(angle) * seat, y: ballY + Math.sin(angle) * seat, angle };
-  return poseFrom(ballX, ballY, seat, tip, tip, { start: angle, span: 0 }, sling);
+  return best;
+}
+
+/**
+ * Real tangents missed as a pair. Each post still draws its own arm out to the ball.
+ * The arc stays on the ball. Nothing is pulled through to a point on the far side.
+ */
+function roundCup(
+  ballX: number,
+  ballY: number,
+  seat: number,
+  cup: number,
+  sling: Sling,
+): Array<{ x: number; y: number }> {
+  const left = attach(sling.left.x, sling.left.y, ballX, ballY, seat, cup);
+  const right = attach(sling.right.x, sling.right.y, ballX, ballY, seat, cup);
+  if (left && right && !linesCross(sling.left.x, sling.left.y, left.x, left.y, sling.right.x, sling.right.y, right.x, right.y)) {
+    const sweep = sweepThrough(left.angle, right.angle, cup);
+    if (Math.abs(sweep.span) <= Math.PI + 0.35) return poseFrom(ballX, ballY, seat, left, right, sweep, sling);
+  }
+  const pose: Array<{ x: number; y: number }> = [];
+  const pushLine = (anchorX: number, anchorY: number, tip: { x: number; y: number }, towardTip: boolean) => {
+    for (let i = 0; i <= SIDE; i++) {
+      const t = towardTip ? i / SIDE : 1 - i / SIDE;
+      if (!towardTip && i === 0) continue;
+      if (towardTip && i === SIDE) continue;
+      pose.push({
+        x: anchorX + (tip.x - anchorX) * t,
+        y: anchorY + (tip.y - anchorY) * t,
+      });
+    }
+  };
+  const from = left ? left.angle : cup - 0.9;
+  const to = right ? right.angle : cup + 0.9;
+  const sweep = sweepThrough(from, to, cup);
+  const start = sweep.start;
+  let span = sweep.span;
+  if (Math.abs(span) > Math.PI + 0.35) span = Math.sign(span) * Math.PI * 0.92;
+  if (Math.abs(span) < 0.35) span = span < 0 ? -0.9 : 0.9;
+  if (left) pushLine(sling.left.x, sling.left.y, left, true);
+  const steps = ARC;
+  for (let i = 0; i <= steps; i++) {
+    const t = start + span * (i / steps);
+    pose.push({ x: ballX + Math.cos(t) * seat, y: ballY + Math.sin(t) * seat });
+  }
+  if (right) pushLine(sling.right.x, sling.right.y, right, false);
+  return resample(pose, BAND_COUNT);
+}
+
+function resample(pts: Array<{ x: number; y: number }>, count: number): Array<{ x: number; y: number }> {
+  const usable: Array<{ x: number; y: number }> = [];
+  for (const p of pts) {
+    const last = usable[usable.length - 1];
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.2) continue;
+    usable.push(p);
+  }
+  if (usable.length === 0) return pts;
+  if (usable.length === 1) return Array.from({ length: count }, () => ({ x: usable[0].x, y: usable[0].y }));
+  const mark: number[] = [0];
+  for (let i = 1; i < usable.length; i++) {
+    mark.push(mark[i - 1] + Math.hypot(usable[i].x - usable[i - 1].x, usable[i].y - usable[i - 1].y));
+  }
+  const total = mark[mark.length - 1] || 1;
+  const out: Array<{ x: number; y: number }> = [];
+  let seg = 0;
+  for (let i = 0; i < count; i++) {
+    const dist = (total * i) / (count - 1);
+    while (seg < mark.length - 2 && mark[seg + 1] < dist) seg += 1;
+    const span = mark[seg + 1] - mark[seg] || 1;
+    const t = (dist - mark[seg]) / span;
+    const a = usable[seg];
+    const b = usable[seg + 1];
+    out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  }
+  return out;
 }
 
 function restAt(t: number, sling: Sling): { x: number; y: number } {
@@ -301,7 +370,7 @@ export class Band {
     while (delta < -Math.PI) delta += Math.PI * 2;
     this.cupAngle += ease ? delta * 0.28 : delta;
     const seat = seatFor(ballX, ballY, this.sling);
-    return tangentCup(ballX, ballY, seat, this.cupAngle, this.sling) ?? cupAt(ballX, ballY, seat, this.cupAngle, this.sling);
+    return tangentCup(ballX, ballY, seat, this.cupAngle, this.sling) ?? roundCup(ballX, ballY, seat, this.cupAngle, this.sling);
   }
 
   private writePose(pose: Array<{ x: number; y: number }>): void {

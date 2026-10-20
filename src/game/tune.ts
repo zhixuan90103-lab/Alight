@@ -23,8 +23,8 @@ export let BAG_ZETA = 0.6;
 /** How far the cloth can give when a ball hits the outside, in pixels. */
 export const BAG_GIVE = 22;
 export let DEAD_PULL = 28;
-export let BIRD_R = 26;
-export let ROPE_THICKNESS = 9;
+export let BIRD_R = 18;
+export let ROPE_THICKNESS = 7;
 /** Share of thickness a full pull removes. The inner edge stays on the ball. */
 export let BAND_PULL_THIN = 0.28;
 
@@ -38,6 +38,10 @@ export function bandWidth(strain: number): number {
  * and the rope dips under the ball. Heavier balls use the same rope and hang lower.
  */
 const CRADLE_RISE = 12;
+/** Fixed end of a band. Blocks the ball and bounces a flying one. */
+export const RIVET_R = 5;
+/** Share of the incoming speed kept after a rivet bounce. The ground stays nearly dead. */
+export const RIVET_BOUNCE = 0.25;
 
 export const POUCH = designToWorld(195, 612);
 
@@ -50,7 +54,8 @@ export type Sling = {
 
 /** Three pouches in a row. Each cradle is narrow enough that the neighbors do not overlap. */
 export const LANE_X = [78, 195, 312];
-const LANE_REACH = 40;
+/** Short enough that the gap between neighboring bands is wider than the ball. */
+const LANE_REACH = 32;
 
 export function slingAt(x: number): Sling {
   const pouch = { x, y: POUCH.y };

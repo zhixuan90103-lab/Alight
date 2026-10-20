@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
-import { BAND_COUNT } from './band';
+
 import { bagDepth, bagMouth, bagMouthHalf, bagOuterPoints } from './bag';
 import {
   BAGS,
@@ -8,6 +8,7 @@ import {
   BIRD_R,
   GROUND_Y,
   SHOW_BAG,
+  RIVET_R,
   SLINGS,
 } from './tune';
 import type { Sim } from './sim';
@@ -55,26 +56,114 @@ function bagGeometry(): THREE.ShapeGeometry {
   return new THREE.ShapeGeometry(shape, 1);
 }
 
-function writeStrip(positions: Float32Array, points: ReadonlyArray<{ x: number; y: number }>, width: number): void {
-  const half = width / 2;
-  for (let i = 0; i < points.length; i++) {
-    const prev = points[Math.max(0, i - 1)];
-    const next = points[Math.min(points.length - 1, i + 1)];
-    let tx = next.x - prev.x;
-    let ty = next.y - prev.y;
-    const mag = Math.hypot(tx, ty) || 1;
-    tx /= mag;
-    ty /= mag;
-    const ox = -ty * half;
-    const oy = tx * half;
-    const o = i * 6;
-    positions[o] = points[i].x + ox;
-    positions[o + 1] = points[i].y + oy;
+const RIBBON_VERTS = 640;
+const RIBBON_INDICES = 2400;
+
+/**
+ * Round strap. Each bend is a fan of radius half the width.
+ * A miter would run out along the bisector and read as a spike, so the fan never extends past that radius.
+ * Points that fold back are dropped. A fold is a spike.
+ */
+function writeRibbon(
+  positions: Float32Array,
+  indices: Uint32Array,
+  points: ReadonlyArray<{ x: number; y: number }>,
+  width: number,
+): number {
+  let v = 0;
+  let c = 0;
+  const add = (x: number, y: number) => {
+    const i = v++;
+    const o = i * 3;
+    positions[o] = x;
+    positions[o + 1] = y;
     positions[o + 2] = 0.45;
-    positions[o + 3] = points[i].x - ox;
-    positions[o + 4] = points[i].y - oy;
-    positions[o + 5] = 0.45;
+    return i;
+  };
+
+  const raw: Array<{ x: number; y: number }> = [];
+  for (const p of points) {
+    const last = raw[raw.length - 1];
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.35) continue;
+    raw.push(p);
   }
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < raw.length; i++) {
+    const prev = pts[pts.length - 1];
+    const next = raw[i + 1];
+    if (prev && next) {
+      const ax = raw[i].x - prev.x;
+      const ay = raw[i].y - prev.y;
+      const bx = next.x - raw[i].x;
+      const by = next.y - raw[i].y;
+      const am = Math.hypot(ax, ay) || 1;
+      const bm = Math.hypot(bx, by) || 1;
+      if ((ax / am) * (bx / bm) + (ay / am) * (by / bm) < -0.35) continue;
+    }
+    pts.push(raw[i]);
+  }
+  if (pts.length < 2) return 0;
+
+  const tang: Array<{ tx: number; ty: number }> = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    let tx = pts[i + 1].x - pts[i].x;
+    let ty = pts[i + 1].y - pts[i].y;
+    const mag = Math.hypot(tx, ty) || 1;
+    tang.push({ tx: tx / mag, ty: ty / mag });
+  }
+
+  const half = width / 2;
+  const segEnd: Array<[number, number]> = [];
+
+  for (let i = 0; i < tang.length; i++) {
+    const lx = -tang[i].ty * half;
+    const ly = tang[i].tx * half;
+    const a = pts[i];
+    const b = pts[i + 1];
+    let sO: number;
+    let sI: number;
+    if (i === 0) {
+      sO = add(a.x + lx, a.y + ly);
+      sI = add(a.x - lx, a.y - ly);
+    } else {
+      const prev = tang[i - 1];
+      const cross = prev.tx * tang[i].ty - prev.ty * tang[i].tx;
+      const dot = prev.tx * tang[i].tx + prev.ty * tang[i].ty;
+      const turn = Math.atan2(cross, dot);
+      if (Math.abs(turn) < 0.02) {
+        sO = segEnd[i - 1][0];
+        sI = segEnd[i - 1][1];
+      } else {
+        sO = add(a.x + lx, a.y + ly);
+        sI = add(a.x - lx, a.y - ly);
+        const center = add(a.x, a.y);
+        const ap = Math.atan2(prev.ty, prev.tx);
+        const startAngle = turn > 0 ? ap - Math.PI / 2 : ap + Math.PI / 2;
+        const steps = Math.max(1, Math.ceil(Math.abs(turn) * 5));
+        const rimStart = turn > 0 ? segEnd[i - 1][1] : segEnd[i - 1][0];
+        const rimEnd = turn > 0 ? sI : sO;
+        let prevRim = rimStart;
+        for (let k = 1; k <= steps; k++) {
+          const ang = startAngle + (turn * k) / steps;
+          const rim = k === steps ? rimEnd : add(a.x + Math.cos(ang) * half, a.y + Math.sin(ang) * half);
+          indices[c++] = center;
+          indices[c++] = prevRim;
+          indices[c++] = rim;
+          prevRim = rim;
+        }
+      }
+    }
+    const eO = add(b.x + lx, b.y + ly);
+    const eI = add(b.x - lx, b.y - ly);
+    segEnd.push([eO, eI]);
+    indices[c++] = sO;
+    indices[c++] = sI;
+    indices[c++] = eO;
+    indices[c++] = sI;
+    indices[c++] = eI;
+    indices[c++] = eO;
+  }
+  return c;
 }
 
 /**
@@ -135,26 +224,27 @@ export function createPlayView(scene: THREE.Scene): {
   });
   let bagKey = -1;
 
-  const postMat = new THREE.MeshBasicMaterial({ color: ROPE });
+  const rivetMat = new THREE.MeshBasicMaterial({ color: ROPE });
+  const rivetHole = new THREE.MeshBasicMaterial({ color: 0xf2f3f5 });
   for (const sling of SLINGS) {
-    for (const post of [sling.left, sling.right]) {
-      const mesh = circle(6, ROPE);
-      mesh.position.set(post.x, post.y, 0.4);
-      mesh.material = postMat;
-      scene.add(mesh);
+    for (const rivet of [sling.left, sling.right]) {
+      const head = circle(RIVET_R, ROPE);
+      head.material = rivetMat;
+      head.position.set(rivet.x, rivet.y, 0.7);
+      const hole = circle(RIVET_R * 0.38, 0xf2f3f5);
+      hole.material = rivetHole;
+      hole.position.set(rivet.x, rivet.y, 0.75);
+      scene.add(head, hole);
     }
   }
 
   const arcs = SLINGS.map(() => {
-    const positions = new Float32Array(BAND_COUNT * 2 * 3);
+    const positions = new Float32Array(RIBBON_VERTS * 3);
+    const indices = new Uint32Array(RIBBON_INDICES);
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const index: number[] = [];
-    for (let i = 0; i < BAND_COUNT - 1; i++) {
-      const a = i * 2;
-      index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-    }
-    geom.setIndex(index);
+    geom.setIndex(new THREE.BufferAttribute(indices, 1));
+    geom.setDrawRange(0, 0);
     const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: ROPE, side: THREE.DoubleSide }));
     mesh.frustumCulled = false;
     mesh.renderOrder = 1;
@@ -163,9 +253,9 @@ export function createPlayView(scene: THREE.Scene): {
   });
 
   const balls = SLINGS.map(() => {
-    const body = circle(BIRD_R, BALL);
-    const highlight = circle(BIRD_R * 0.38, BALL_LIGHT);
-    highlight.position.set(-7, 8, 0.2);
+    const body = circle(1, BALL);
+    const highlight = circle(0.38, BALL_LIGHT);
+    highlight.position.set(-0.28, 0.32, 0.2);
     const group = new THREE.Group();
     group.add(body, highlight);
     group.renderOrder = 2;
@@ -210,12 +300,20 @@ export function createPlayView(scene: THREE.Scene): {
         const ball = balls[i];
         ball.position.set(shot.birdX + shot.aimX * amp, shot.birdY + shot.aimY * amp, 1);
         ball.visible = shot.phase !== 'gone' && shot.phase !== 'asleep';
-        const radius = BIRD_R / 26;
-        ball.scale.set(radius, radius, 1);
+        ball.scale.set(BIRD_R, BIRD_R, 1);
         const points = amp === 0 ? shot.band : humAlongForce(shot.band, shot.birdX, shot.birdY, shot.aimX, shot.aimY, amp);
-        const attr = arcs[i].geometry.getAttribute('position') as THREE.BufferAttribute;
-        writeStrip(attr.array as Float32Array, points, bandWidth(shot.strain));
+        const geom = arcs[i].geometry;
+        const attr = geom.getAttribute('position') as THREE.BufferAttribute;
+        const index = geom.getIndex() as THREE.BufferAttribute;
+        const count = writeRibbon(
+          attr.array as Float32Array,
+          index.array as Uint32Array,
+          points,
+          bandWidth(shot.strain),
+        );
+        geom.setDrawRange(0, count);
         attr.needsUpdate = true;
+        index.needsUpdate = true;
       }
     },
   };

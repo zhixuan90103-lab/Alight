@@ -12,6 +12,8 @@ import {
   MAX_CATCHUP,
   MAX_PULL,
   SHOW_BAG,
+  RIVET_BOUNCE,
+  RIVET_R,
   ROPE_MASS,
   ROPE_THICKNESS,
   SLINGS,
@@ -106,6 +108,9 @@ export class Sim {
   private feel: Feel[] = [];
   /** Flyer index + seated index, so one overlap only knocks once. */
   private knocks = new Set<string>();
+  /** Rivet collider handle → the band it belongs to. */
+  private readonly rivetOf = new Map<number, Sling>();
+  private readonly hooks: RAPIER.PhysicsHooks;
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
@@ -113,6 +118,29 @@ export class Sim {
     const ground = RAPIER.ColliderDesc.cuboid(240, 16).setTranslation(195, GROUND_Y - 16);
     ground.setRestitution(0.05);
     this.groundCollider = this.world.createCollider(ground);
+    for (const sling of SLINGS) {
+      for (const rivet of [sling.left, sling.right]) {
+        const desc = RAPIER.ColliderDesc.ball(RIVET_R)
+          .setTranslation(rivet.x, rivet.y)
+          .setRestitution(RIVET_BOUNCE)
+          .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
+          .setFriction(0.2)
+          .setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS);
+        const collider = this.world.createCollider(desc);
+        this.rivetOf.set(collider.handle, sling);
+      }
+    }
+    this.hooks = {
+      filterContactPair: (a, b) => {
+        const sling = this.rivetOf.get(a) ?? this.rivetOf.get(b);
+        if (!sling) return RAPIER.SolverFlags.COMPUTE_IMPULSE;
+        const ball = this.world.getCollider(this.rivetOf.has(a) ? b : a);
+        const at = ball.translation();
+        if (betweenRivets(at.x, at.y, sling)) return RAPIER.SolverFlags.EMPTY;
+        return RAPIER.SolverFlags.COMPUTE_IMPULSE;
+      },
+      filterIntersectionPair: () => true,
+    };
     this.sealed = BAGS.map(() => false);
     this.gone = BAGS.map(() => false);
     this.shots = SLINGS.map((sling) => this.makeShot(sling));
@@ -313,6 +341,9 @@ export class Sim {
     const minY = GROUND_Y + BIRD_R + 12;
     x = Math.min(366, Math.max(24, x));
     y = Math.min(800, Math.max(minY, y));
+    const blocked = this.blockRivets(x, y, 0, 0);
+    x = blocked.x;
+    y = blocked.y;
     const meet = meetBallY(x, shot.sling);
     const slip = slipBallY(x, shot.sling);
     if (y > slip) {
@@ -353,11 +384,14 @@ export class Sim {
     const omega2 = STIFFNESS / ROPE_MASS;
     const nvx = shot.ropeVx + -omega2 * ux * STEP;
     const nvy = shot.ropeVy + -omega2 * uy * STEP;
-    const nx = shot.ropeX + nvx * STEP;
-    const ny = shot.ropeY + nvy * STEP;
+    let nx = shot.ropeX + nvx * STEP;
+    let ny = shot.ropeY + nvy * STEP;
+    const blocked = this.blockRivets(nx, ny, nvx, nvy);
+    nx = blocked.x;
+    ny = blocked.y;
     const crossed = ux * (nx - pouch.x) + uy * (ny - pouch.y) <= 0;
-    shot.ropeVx = nvx;
-    shot.ropeVy = nvy;
+    shot.ropeVx = blocked.vx;
+    shot.ropeVy = blocked.vy;
     if (crossed) {
       this.detach(shot, nvx, nvy);
       return;
@@ -464,6 +498,11 @@ export class Sim {
       y = floor;
       shot.catchVy = 0;
     }
+    const blocked = this.blockRivets(x, y, shot.catchVx, shot.catchVy);
+    x = blocked.x;
+    y = blocked.y;
+    shot.catchVx = blocked.vx;
+    shot.catchVy = blocked.vy;
     shot.bird.setNextKinematicTranslation({ x, y });
     this.shots[shot.catchOn].band.holdUnder(x, y);
     if (len(x - pouch.x, y - pouch.y) < 0.4 && len(shot.catchVx, shot.catchVy) < 2) {
@@ -547,6 +586,40 @@ export class Sim {
     }
   }
 
+  /** Keep the ball outside every rivet. A closing speed bounces. A held pull only stops. */
+  private blockRivets(x: number, y: number, vx: number, vy: number): { x: number; y: number; vx: number; vy: number } {
+    let px = x;
+    let py = y;
+    let pvx = vx;
+    let pvy = vy;
+    for (const sling of SLINGS) {
+      if (betweenRivets(px, py, sling)) continue;
+      for (const rivet of [sling.left, sling.right]) {
+        let dx = px - rivet.x;
+        let dy = py - rivet.y;
+        let dist = Math.hypot(dx, dy);
+        const min = BIRD_R + RIVET_R;
+        if (dist >= min) continue;
+        if (dist < 1e-4) {
+          dx = 0;
+          dy = 1;
+          dist = 1;
+        }
+        const nx = dx / dist;
+        const ny = dy / dist;
+        px = rivet.x + nx * min;
+        py = rivet.y + ny * min;
+        const approach = pvx * nx + pvy * ny;
+        if (approach < 0) {
+          pvx -= (1 + RIVET_BOUNCE) * approach * nx;
+          pvy -= (1 + RIVET_BOUNCE) * approach * ny;
+          if (-approach > 80) this.feel.push('knock');
+        }
+      }
+    }
+    return { x: px, y: py, vx: pvx, vy: pvy };
+  }
+
   private bandHeld(index: number): boolean {
     return this.shots.some((shot) => shot.phase === 'catching' && shot.catchOn === index);
   }
@@ -569,7 +642,7 @@ export class Sim {
       else if (shot.phase === 'settling') this.stepBag(shot);
       else if (shot.phase !== 'pulling' && !this.bandHeld(this.shots.indexOf(shot))) shot.band.step(STEP);
     }
-    this.world.step();
+    this.world.step(undefined, this.hooks);
     for (const shot of this.shots) this.afterFly(shot);
   }
 
@@ -686,6 +759,15 @@ export class Sim {
     shot.returnIn = 0.35;
     this.feel.push('miss');
   }
+}
+
+/** Ball center is in the opening between this band's two rivets, so they must not pinch it. */
+function betweenRivets(x: number, y: number, sling: Sling): boolean {
+  const ax = sling.right.x - sling.left.x;
+  const ay = sling.right.y - sling.left.y;
+  const span = ax * ax + ay * ay || 1;
+  const t = ((x - sling.left.x) * ax + (y - sling.left.y) * ay) / span;
+  return t > 0 && t < 1;
 }
 
 function segmentDistance(
