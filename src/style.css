@@ -140,22 +140,31 @@ body {
   top: 0;
   right: 0;
   z-index: 3;
-  width: 168px;
+  width: auto;
   pointer-events: auto;
   color: #1c2430;
   font-size: 11px;
   line-height: 1.2;
 }
 
+#tune.is-open {
+  width: 168px;
+}
+
 .tune-head {
-  width: 100%;
+  display: block;
+  margin-left: auto;
   border: 0;
   border-radius: 8px;
-  padding: 6px 8px;
+  padding: 6px 12px;
   background: rgba(255, 255, 255, 0.92);
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: center;
+}
+
+#tune.is-open .tune-head {
+  width: 100%;
 }
 
 .tune-body {

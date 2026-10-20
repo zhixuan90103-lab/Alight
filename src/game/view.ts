@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 import { BAND_COUNT } from './band';
-import { bandWidth, BIRD_R, GROUND_Y, NEST, SHOW_NEST } from './tune';
+import { bagDepth, bagMouth, bagMouthHalf, bagOuterPoints } from './bag';
+import {
+  bandWidth,
+  BIRD_R,
+  GROUND_Y,
+  SHOW_BAG,
+} from './tune';
 import { SLING_ANCHORS, type Sim } from './sim';
 
 function circle(radius: number, color: number): THREE.Mesh {
@@ -34,6 +40,17 @@ function humAlongForce(
     const w = d <= contact ? 1 : Math.max(0, 1 - (d - contact) / (reach - contact));
     return { x: p.x + aimX * amp * w, y: p.y + aimY * amp * w };
   });
+}
+
+/** Filled silhouette. The top edge is only the drawing of the cloth; the mouth stays open in the sim. */
+function bagGeometry(): THREE.ShapeGeometry {
+  const mouth = bagMouth();
+  const pts = bagOuterPoints();
+  const shape = new THREE.Shape();
+  shape.moveTo(pts[0].x - mouth.x, pts[0].y - mouth.y);
+  for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x - mouth.x, pts[i].y - mouth.y);
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape, 1);
 }
 
 function writeStrip(positions: Float32Array, points: ReadonlyArray<{ x: number; y: number }>, width: number): void {
@@ -88,14 +105,26 @@ export function createPlayView(scene: THREE.Scene): {
   scene.add(ground);
   const groundH = GROUND_Y;
 
-  // Lower semicircle, opening upward. Inner edge matches the ball so a stop fills the seat.
-  const seat = new THREE.Mesh(
-    new THREE.RingGeometry(BIRD_R + 2, BIRD_R + 10, 28, 1, Math.PI, Math.PI),
-    new THREE.MeshBasicMaterial({ color: BALL }),
-  );
-  seat.position.set(NEST.x, NEST.y, 0);
-  seat.visible = SHOW_NEST;
-  scene.add(seat);
+  const bagMat = new THREE.MeshBasicMaterial({
+    color: BALL,
+    transparent: true,
+    opacity: 0.38,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const sealMat = new THREE.MeshBasicMaterial({
+    color: 0x1d5bb8,
+    transparent: true,
+    opacity: 0.85,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const bag = new THREE.Mesh(bagGeometry(), bagMat);
+  bag.renderOrder = 3;
+  const seal = new THREE.Mesh(new THREE.PlaneGeometry(1, 6), sealMat);
+  seal.renderOrder = 4;
+  scene.add(bag, seal);
+  let bagKey = -1;
 
   const postMat = new THREE.MeshBasicMaterial({ color: ROPE });
   const postL = circle(6, ROPE);
@@ -138,10 +167,23 @@ export function createPlayView(scene: THREE.Scene): {
       const amp = atMax ? Math.sin(hum * 64) * 1.6 : 0;
       ball.position.set(s.birdX + s.aimX * amp, s.birdY + s.aimY * amp, 1);
       ball.visible = s.phase !== 'gone';
-      const settling = s.phase === 'settling';
       const radius = BIRD_R / 26;
-      ball.scale.set(settling ? 1.06 * radius : radius, settling ? 0.92 * radius : radius, 1);
-      seat.visible = SHOW_NEST;
+      ball.scale.set(radius, radius, 1);
+      const mouth = bagMouth();
+      const half = bagMouthHalf();
+      const key = half * 1000 + bagDepth();
+      if (key !== bagKey) {
+        bagKey = key;
+        bag.geometry.dispose();
+        bag.geometry = bagGeometry();
+      }
+      bag.visible = SHOW_BAG;
+      seal.visible = SHOW_BAG && s.bagSealed;
+      const giveX = s.bagPressX * s.bagGive * 0.55;
+      const giveY = s.bagPressY * s.bagGive * 0.55;
+      bag.position.set(mouth.x - giveX, mouth.y - giveY, 0.2);
+      seal.position.set(mouth.x, mouth.y - 1, 0.4);
+      seal.scale.set(half * 2 + 10, 1, 1);
       ground.scale.y = GROUND_Y / groundH;
       ground.position.y = GROUND_Y / 2;
 

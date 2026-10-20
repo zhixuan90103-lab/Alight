@@ -10,8 +10,8 @@
 | [docs/MERGE.md](./docs/MERGE.md) | 双工程优点对照与合并说明 |
 | [docs/AUDIO.md](./docs/AUDIO.md) | 音效方案（预解码 + 每帧一批 + 原生池） |
 | [docs/HAPTICS.md](./docs/HAPTICS.md) | 震动如何一次接对（插件注册 + 玩法层） |
-| [docs/GAME-RULES.md](./docs/GAME-RULES.md) | Alight 规则 |
-| [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md) | Alight 实现方案 |
+| [docs/GAME-RULES.md](./docs/GAME-RULES.md) | 规则：球、皮筋、口袋。这一版和以后分开写 |
+| [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md) | 这一版怎么做：数、皮筋、口袋 |
 
 ## 30 秒上手
 

@@ -1,6 +1,6 @@
 import { designToWorld } from './frame';
 
-/** Pixel-space tune for one light bird and one nest above the sling. */
+/** Pixel-space tune for one light ball, one band, and one bag. */
 /** World gravity, in design pixels per second squared. Not 9.8. */
 export let GRAVITY = 3800;
 /** Base mass. The light ball is 1. Heavier balls are multiples of this. */
@@ -18,6 +18,10 @@ export let STIFFNESS = 150;
  */
 export let ROPE_MASS = MASS / 9;
 export let BAND_ZETA = 0.3;
+/** Bag settle damping. Higher than the band so the ball sinks in and stops. */
+export let BAG_ZETA = 0.6;
+/** How far the cloth can give when a ball hits the outside, in pixels. */
+export const BAG_GIVE = 22;
 export let DEAD_PULL = 28;
 export let BIRD_R = 26;
 export let ROPE_THICKNESS = 9;
@@ -51,15 +55,14 @@ export function restSag(mass: number): number {
 export let REST_SAG = restSag(MASS);
 /** Empty band. Same rule, using the band's own mass, so it hangs tighter than it does under the ball. */
 export let EMPTY_SAG = restSag(ROPE_MASS);
-/** Catch when the ball center reaches the semicircle, then settle on its center. */
-export let NEST_R = BIRD_R + 12;
 export const STEP = 1 / 60;
 export const MAX_CATCHUP = 0.25;
 
+/** Design point the bag hangs from. Mouth and seat are derived in bag.ts. */
+export const BAG_AT = designToWorld(70, 250);
+/** Turn the blue bag off to shoot with no target. On by default. */
+export let SHOW_BAG = true;
 
-export const NEST = designToWorld(195, 250);
-/** The upper semicircle is hidden for now. Turn this on to draw it and let it catch the ball. */
-export let SHOW_NEST = false;
 /** Top surface of the ground, in world y. A full downward pull stays above it. */
 export const GROUND_Y = 36;
 /**
@@ -76,20 +79,20 @@ export type TunePatch = {
   mass?: number;
   stiffness?: number;
   zeta?: number;
+  bagZeta?: number;
   deadPull?: number;
   birdR?: number;
   ropeThickness?: number;
   pullThin?: number;
   maxPull?: number;
   slipLift?: number;
-  showNest?: boolean;
+  showBag?: boolean;
 };
 
 function refreshDerived(): void {
   ROPE_MASS = MASS / 9;
   REST_SAG = restSag(MASS);
   EMPTY_SAG = restSag(ROPE_MASS);
-  NEST_R = BIRD_R + 12;
 }
 
 /** Live tune used by the on-screen panel. Derived sag and rope mass follow mass, gravity, and stiffness. */
@@ -98,13 +101,14 @@ export function writeTune(patch: TunePatch): void {
   if (patch.mass !== undefined) MASS = patch.mass;
   if (patch.stiffness !== undefined) STIFFNESS = patch.stiffness;
   if (patch.zeta !== undefined) BAND_ZETA = patch.zeta;
+  if (patch.bagZeta !== undefined) BAG_ZETA = patch.bagZeta;
   if (patch.deadPull !== undefined) DEAD_PULL = patch.deadPull;
   if (patch.birdR !== undefined) BIRD_R = patch.birdR;
   if (patch.ropeThickness !== undefined) ROPE_THICKNESS = patch.ropeThickness;
   if (patch.pullThin !== undefined) BAND_PULL_THIN = patch.pullThin;
   if (patch.maxPull !== undefined) MAX_PULL = patch.maxPull;
   if (patch.slipLift !== undefined) SLIP_LIFT = patch.slipLift;
-  if (patch.showNest !== undefined) SHOW_NEST = patch.showNest;
+  if (patch.showBag !== undefined) SHOW_BAG = patch.showBag;
   refreshDerived();
 }
 

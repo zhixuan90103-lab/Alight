@@ -56,6 +56,7 @@ async function boot(): Promise<void> {
   let preview: DevicePreviewController;
   let pointerId: number | null = null;
   let lastPhase = sim.phase;
+  let lastGive = sim.bagGive;
 
   const onLayout = (layout: StageLayout) => {
     applyStageTransform(stage, layout);
@@ -135,6 +136,8 @@ async function boot(): Promise<void> {
       lastPhase = sim.phase;
       paintHearts(sim.hearts);
     }
+    if (sim.bagGive > 0 && lastGive === 0) void haptics.impact('light');
+    lastGive = sim.bagGive;
     view.sync(sim, dt);
     renderer.render(scene, view.camera);
   });

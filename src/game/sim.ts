@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier2d-compat';
+import { aboveOpenMouth, bagContact, bagSeat, bagSpring, clearCloth, enteredMouth, pushCloth, touchCloth, type Cloth } from './bag';
 import { Band } from './band';
 import {
   ANCHOR_L,
@@ -11,9 +12,7 @@ import {
   MASS,
   MAX_CATCHUP,
   MAX_PULL,
-  NEST,
-  NEST_R,
-  SHOW_NEST,
+  SHOW_BAG,
   POUCH,
   ROPE_MASS,
   ROPE_THICKNESS,
@@ -39,7 +38,13 @@ export type SimSample = {
   aimX: number;
   aimY: number;
   showBand: boolean;
-  nestAsleep: boolean;
+  /** True from the frame the center enters the mouth, before the wobble finishes. */
+  bagSealed: boolean;
+  bagAsleep: boolean;
+  /** How far the cloth is pushed in. The view shifts the bag along the normal. */
+  bagGive: number;
+  bagPressX: number;
+  bagPressY: number;
 };
 
 let ready: Promise<void> | null = null;
@@ -54,8 +59,9 @@ function len(x: number, y: number): number {
 }
 
 /**
- * Level 1: one light bird, one soft nest.
- * Nest capture damps velocity and draws the body to the nest center until it stops.
+ * One light ball and one blue bag.
+ * The center crossing the mouth seals the bag and keeps the impact speed.
+ * The same stiffness that seats the ball on the rope then settles it on the bag seat.
  */
 export class Sim {
   readonly world: RAPIER.World;
@@ -64,8 +70,13 @@ export class Sim {
   private groundCollider: RAPIER.Collider;
   phase: Phase = 'ready';
   hearts = 3;
-  nestAsleep = false;
-  private fouled = false;
+  bagSealed = false;
+  bagAsleep = false;
+  private cloth: Cloth = clearCloth();
+
+  get bagGive(): number {
+    return this.cloth.give;
+  }
   /** Stays false until the ball has left the band, so the launch itself is not a catch. */
   private clearOfBand = false;
   private prevX = POUCH.x;
@@ -132,7 +143,11 @@ export class Sim {
       aimX: pull > 1 ? dx / pull : 0,
       aimY: pull > 1 ? dy / pull : 1,
       showBand: true,
-      nestAsleep: this.nestAsleep,
+      bagSealed: this.bagSealed,
+      bagAsleep: this.bagAsleep,
+      bagGive: this.cloth.give,
+      bagPressX: this.cloth.nx,
+      bagPressY: this.cloth.ny,
     };
   }
 
@@ -177,7 +192,6 @@ export class Sim {
     this.ropeVx = 0;
     this.ropeVy = 0;
     this.band.holdTaut(p.x, p.y);
-    this.fouled = false;
     this.phase = 'launching';
   }
 
@@ -187,7 +201,6 @@ export class Sim {
     this.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
     this.bird.setGravityScale(1, true);
     this.bird.setLinvel({ x: vx, y: vy }, true);
-    this.fouled = false;
     this.clearOfBand = false;
     this.prevX = POUCH.x;
     this.prevY = POUCH.y;
@@ -250,7 +263,6 @@ export class Sim {
     this.clearOfBand = false;
     this.prevX = x;
     this.prevY = y;
-    this.fouled = false;
     this.phase = 'flying';
   }
 
@@ -325,6 +337,38 @@ export class Sim {
     this.bird.setGravityScale(0, true);
   }
 
+  /**
+   * The bag gives like the rope: impact speed stays, stiffness pulls toward the seat.
+   * The seal is already shut. This step only plays the wobble.
+   */
+  private stepBag(): void {
+    const p = this.bird.translation();
+    const next = bagSpring(p.x, p.y, this.catchVx, this.catchVy);
+    this.catchVx = next.vx;
+    this.catchVy = next.vy;
+    this.bird.setNextKinematicTranslation({ x: next.x, y: next.y });
+    this.world.step();
+    if (!next.rested) return;
+    const seat = bagSeat();
+    this.bird.setLinvel({ x: 0, y: 0 }, true);
+    this.bird.setTranslation({ x: seat.x, y: seat.y }, true);
+    this.bird.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+    this.phase = 'asleep';
+    this.bagAsleep = true;
+  }
+
+  /** Center crossed the opening from above. The bag takes this ball and shuts. */
+  private beginBag(): void {
+    const v = this.bird.linvel();
+    this.catchVx = v.x;
+    this.catchVy = v.y;
+    this.bagSealed = true;
+    this.phase = 'settling';
+    this.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    this.bird.setLinvel({ x: 0, y: 0 }, true);
+    this.bird.setGravityScale(0, true);
+  }
+
   private stepCatch(): void {
     const p = this.bird.translation();
     const ux = p.x - POUCH.x;
@@ -370,6 +414,10 @@ export class Sim {
       this.stepCatch();
       return;
     }
+    if (this.phase === 'settling') {
+      this.stepBag();
+      return;
+    }
     this.band.step(STEP);
 
     if (this.phase === 'pulling' || this.phase === 'ready' || this.phase === 'asleep' || this.phase === 'gone') {
@@ -385,34 +433,10 @@ export class Sim {
     this.world.step();
     const p = this.bird.translation();
     const v = this.bird.linvel();
-    const speed = len(v.x, v.y);
-    const toNest = len(p.x - NEST.x, p.y - NEST.y);
-
-    if (SHOW_NEST && this.phase === 'flying' && !this.fouled && toNest < NEST_R) {
-      this.phase = 'settling';
-      this.bird.setGravityScale(0, true);
-    }
-
-    if (this.phase === 'settling') {
-      const nx = NEST.x - p.x;
-      const ny = NEST.y - p.y;
-      this.bird.setLinvel({ x: v.x * 0.72, y: v.y * 0.72 }, true);
-      this.bird.setTranslation({ x: p.x + nx * 0.18, y: p.y + ny * 0.18 }, true);
-      const after = this.bird.linvel();
-      const left = len(after.x, after.y);
-      const dist = len(NEST.x - this.bird.translation().x, NEST.y - this.bird.translation().y);
-      if (left < 18 && dist < 10) {
-        this.bird.setLinvel({ x: 0, y: 0 }, true);
-        this.bird.setTranslation({ x: NEST.x, y: NEST.y }, true);
-        this.bird.setBodyType(RAPIER.RigidBodyType.Fixed, true);
-        this.phase = 'asleep';
-        this.nestAsleep = true;
-      }
-      return;
-    }
-
     if (this.phase === 'flying') {
-      const touched = this.bandTouches(this.prevX, this.prevY, p.x, p.y);
+      const fromX = this.prevX;
+      const fromY = this.prevY;
+      const touched = this.bandTouches(fromX, fromY, p.x, p.y);
       this.prevX = p.x;
       this.prevY = p.y;
       // The empty band whips through the pouch while the ball is still leaving.
@@ -423,22 +447,72 @@ export class Sim {
         this.beginCatch();
         return;
       }
+      if (SHOW_BAG && this.meetBag(fromX, fromY, p.x, p.y)) return;
       const hitGround = p.y - BIRD_R <= GROUND_Y + 2 && v.y <= 0;
       const out = p.x < -40 || p.x > 430 || p.y > 900;
-      if (hitGround || out) {
-        this.fouled = true;
-        this.hearts -= 1;
-        if (this.hearts <= 0) {
-          this.phase = 'gone';
-          this.bird.setLinvel({ x: 0, y: 0 }, true);
-          return;
-        }
-        this.phase = 'returning';
-        this.returnIn = 0.35;
-      } else if (speed < 30 && p.y < NEST.y - 40) {
-        this.fouled = true;
-      }
+      if (hitGround || out) this.miss();
     }
+  }
+
+  /**
+   * Same plane as the ball. The outer contour blocks; the mouth is the only opening.
+   * Crossing the mouth downward seals. Any other contact pushes the ball back out.
+   */
+  private meetBag(x0: number, y0: number, x1: number, y1: number): boolean {
+    if (this.cloth.on) {
+      const p = this.bird.translation();
+      const v = this.bird.linvel();
+      const moved = pushCloth(this.cloth, p.x, p.y, v.x, v.y);
+      this.applyCloth(moved);
+      if (moved.held) return true;
+    }
+    const travel = Math.hypot(x1 - x0, y1 - y0);
+    const steps = Math.max(1, Math.ceil(travel / 4));
+    let ax = x0;
+    let ay = y0;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const bx = x0 + (x1 - x0) * t;
+      const by = y0 + (y1 - y0) * t;
+      if (!this.bagSealed && enteredMouth(ax, ay, bx, by)) {
+        this.beginBag();
+        return true;
+      }
+      if (!this.bagSealed && aboveOpenMouth(bx, by)) {
+        ax = bx;
+        ay = by;
+        continue;
+      }
+      const hit = bagContact(bx, by, this.bagSealed);
+      if (hit) {
+        const p = this.bird.translation();
+        const v = this.bird.linvel();
+        this.applyCloth(touchCloth(this.cloth, hit, p.x, p.y, v.x, v.y));
+        return true;
+      }
+      ax = bx;
+      ay = by;
+    }
+    return false;
+  }
+
+  private applyCloth(moved: { cloth: Cloth; x: number; y: number; vx: number; vy: number }): void {
+    this.cloth = moved.cloth;
+    this.bird.setTranslation({ x: moved.x, y: moved.y }, true);
+    this.bird.setLinvel({ x: moved.vx, y: moved.vy }, true);
+    this.prevX = moved.x;
+    this.prevY = moved.y;
+  }
+
+  private miss(): void {
+    this.hearts -= 1;
+    if (this.hearts <= 0) {
+      this.phase = 'gone';
+      this.bird.setLinvel({ x: 0, y: 0 }, true);
+      return;
+    }
+    this.phase = 'returning';
+    this.returnIn = 0.35;
   }
 }
 

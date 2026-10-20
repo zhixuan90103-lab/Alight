@@ -1,5 +1,6 @@
 import type { Sim } from './sim';
 import {
+  BAG_ZETA,
   BAND_PULL_THIN,
   BAND_ZETA,
   BIRD_R,
@@ -8,7 +9,7 @@ import {
   MASS,
   MAX_PULL,
   ROPE_THICKNESS,
-  SHOW_NEST,
+  SHOW_BAG,
   SLIP_LIFT,
   STIFFNESS,
   writeTune,
@@ -29,6 +30,7 @@ const ROWS: Row[] = [
   { key: 'mass', label: '质量', min: 0.3, max: 2, step: 0.05, value: MASS },
   { key: 'stiffness', label: '劲度', min: 10, max: 160, step: 1, value: STIFFNESS },
   { key: 'zeta', label: '阻尼', min: 0.05, max: 1.2, step: 0.05, value: BAND_ZETA },
+  { key: 'bagZeta', label: '口袋阻尼', min: 0.05, max: 2.5, step: 0.05, value: BAG_ZETA },
   { key: 'maxPull', label: '最大拉动', min: 40, max: 240, step: 1, value: MAX_PULL },
   { key: 'slipLift', label: '向上脱手', min: 0, max: 80, step: 1, value: SLIP_LIFT },
   { key: 'deadPull', label: '死区', min: 0, max: 80, step: 1, value: DEAD_PULL },
@@ -58,9 +60,11 @@ export function mountTunePanel(parent: HTMLElement, sim: Sim): void {
   body.className = 'tune-body';
   root.append(body);
 
-  let open = true;
+  let open = false;
   const paintOpen = () => {
     body.hidden = !open;
+    root.classList.toggle('is-open', open);
+    head.textContent = open ? '关闭' : '参数';
     head.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
   head.addEventListener('click', () => {
@@ -96,12 +100,12 @@ export function mountTunePanel(parent: HTMLElement, sim: Sim): void {
   const nest = document.createElement('label');
   nest.className = 'tune-row tune-check';
   const nestName = document.createElement('span');
-  nestName.textContent = '上面半圆';
+  nestName.textContent = '蓝色袋子';
   const nestInput = document.createElement('input');
   nestInput.type = 'checkbox';
-  nestInput.checked = SHOW_NEST;
+  nestInput.checked = SHOW_BAG;
   nestInput.addEventListener('change', () => {
-    writeTune({ showNest: nestInput.checked });
+    writeTune({ showBag: nestInput.checked });
     sim.applyTune();
   });
   nest.append(nestName, nestInput);
