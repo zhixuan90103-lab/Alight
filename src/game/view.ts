@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 import { BAND_COUNT } from './band';
-import { bandWidth, BIRD_R, GROUND_Y, NEST } from './tune';
+import { bandWidth, BIRD_R, GROUND_Y, NEST, SHOW_NEST } from './tune';
 import { SLING_ANCHORS, type Sim } from './sim';
 
 function circle(radius: number, color: number): THREE.Mesh {
@@ -86,6 +86,7 @@ export function createPlayView(scene: THREE.Scene): {
   );
   ground.position.set(DESIGN_WIDTH / 2, GROUND_Y / 2, 0);
   scene.add(ground);
+  const groundH = GROUND_Y;
 
   // Lower semicircle, opening upward. Inner edge matches the ball so a stop fills the seat.
   const seat = new THREE.Mesh(
@@ -93,6 +94,7 @@ export function createPlayView(scene: THREE.Scene): {
     new THREE.MeshBasicMaterial({ color: BALL }),
   );
   seat.position.set(NEST.x, NEST.y, 0);
+  seat.visible = SHOW_NEST;
   scene.add(seat);
 
   const postMat = new THREE.MeshBasicMaterial({ color: ROPE });
@@ -137,7 +139,11 @@ export function createPlayView(scene: THREE.Scene): {
       ball.position.set(s.birdX + s.aimX * amp, s.birdY + s.aimY * amp, 1);
       ball.visible = s.phase !== 'gone';
       const settling = s.phase === 'settling';
-      ball.scale.set(settling ? 1.06 : 1, settling ? 0.92 : 1, 1);
+      const radius = BIRD_R / 26;
+      ball.scale.set(settling ? 1.06 * radius : radius, settling ? 0.92 * radius : radius, 1);
+      seat.visible = SHOW_NEST;
+      ground.scale.y = GROUND_Y / groundH;
+      ground.position.y = GROUND_Y / 2;
 
       const points = amp === 0 ? s.band : humAlongForce(s.band, s.birdX, s.birdY, s.aimX, s.aimY, amp);
       const attr = arcGeom.getAttribute('position') as THREE.BufferAttribute;

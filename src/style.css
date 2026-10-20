@@ -135,6 +135,61 @@ body {
   box-shadow: none;
 }
 
+#tune {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  width: 168px;
+  pointer-events: auto;
+  color: #1c2430;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.tune-head {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.tune-body {
+  margin-top: 4px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 6px 8px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.tune-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 6px;
+  margin-bottom: 6px;
+}
+
+.tune-row input[type='range'] {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0;
+}
+
+.tune-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.tune-check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 body.debug-safe-area #ui-root::before {
   content: '';
   pointer-events: none;

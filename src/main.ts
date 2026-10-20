@@ -23,6 +23,7 @@ import { applyNativeClass, applySafeAreaCssVars, readSafeAreaInsets } from './ad
 import { createRenderer, resizeToDesign } from './create-renderer';
 import { designToWorld } from './game/frame';
 import { Sim } from './game/sim';
+import { mountTunePanel } from './game/tunePanel';
 import { createPlayView } from './game/view';
 import { haptics } from './utils/haptics';
 
@@ -49,6 +50,8 @@ async function boot(): Promise<void> {
   const sim = await Sim.create();
   const view = createPlayView(scene);
   paintHearts(sim.hearts);
+  const uiRoot = document.getElementById('ui-root');
+  if (uiRoot) mountTunePanel(uiRoot, sim);
 
   let preview: DevicePreviewController;
   let pointerId: number | null = null;
@@ -82,17 +85,21 @@ async function boot(): Promise<void> {
     return designToWorld(x, y);
   };
 
+  const onTune = (event: Event) => (event.target as HTMLElement | null)?.closest?.('#tune');
+
   window.addEventListener('pointerdown', (event) => {
+    if (onTune(event)) return;
     if (pointerId !== null) return;
     const world = designPoint(event);
     if (!world) return;
     pointerId = event.pointerId;
     const before = sim.phase;
     sim.pointerDown(world.x, world.y);
-    if (before === 'ready' && sim.phase === 'pulling') void haptics.impact('light');
+    if (sim.phase === 'pulling' && before !== 'pulling') void haptics.impact('light');
   });
 
   window.addEventListener('pointermove', (event) => {
+    if (onTune(event)) return;
     if (event.pointerId !== pointerId) return;
     const world = designPoint(event);
     if (!world) return;

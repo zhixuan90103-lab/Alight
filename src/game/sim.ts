@@ -13,6 +13,7 @@ import {
   MAX_PULL,
   NEST,
   NEST_R,
+  SHOW_NEST,
   POUCH,
   ROPE_MASS,
   ROPE_THICKNESS,
@@ -59,6 +60,8 @@ function len(x: number, y: number): number {
 export class Sim {
   readonly world: RAPIER.World;
   readonly bird: RAPIER.RigidBody;
+  private ballCollider: RAPIER.Collider;
+  private groundCollider: RAPIER.Collider;
   phase: Phase = 'ready';
   hearts = 3;
   nestAsleep = false;
@@ -86,16 +89,24 @@ export class Sim {
     this.world.integrationParameters.lengthUnit = 80;
     const ground = RAPIER.ColliderDesc.cuboid(240, 16).setTranslation(195, GROUND_Y - 16);
     ground.setRestitution(0.05);
-    this.world.createCollider(ground);
+    this.groundCollider = this.world.createCollider(ground);
 
     const desc = RAPIER.RigidBodyDesc.kinematicPositionBased()
       .setTranslation(POUCH.x, POUCH.y)
       .setCcdEnabled(true);
     this.bird = this.world.createRigidBody(desc);
-    this.world.createCollider(
+    this.ballCollider = this.world.createCollider(
       RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS).setRestitution(0.05),
       this.bird,
     );
+  }
+
+  /** Push the live tune into bodies that were created once. */
+  applyTune(): void {
+    this.world.gravity = { x: 0, y: -GRAVITY };
+    this.ballCollider.setMass(MASS);
+    this.ballCollider.setRadius(BIRD_R);
+    this.groundCollider.setTranslation({ x: 195, y: GROUND_Y - 16 });
   }
 
   static async create(): Promise<Sim> {
@@ -126,9 +137,15 @@ export class Sim {
   }
 
   pointerDown(worldX: number, worldY: number): void {
-    if (this.phase !== 'ready') return;
-    const p = this.bird.translation();
-    if (len(worldX - p.x, worldY - p.y) > 90) return;
+    const animation =
+      this.phase === 'launching' ||
+      this.phase === 'flying' ||
+      this.phase === 'catching' ||
+      this.phase === 'returning';
+    if (this.phase !== 'ready' && !animation) return;
+    const grab = animation ? POUCH : this.bird.translation();
+    if (len(worldX - grab.x, worldY - grab.y) > 90) return;
+    if (animation) this.restOnPouch();
     this.phase = 'pulling';
     this.movePull(worldX, worldY);
   }
@@ -371,7 +388,7 @@ export class Sim {
     const speed = len(v.x, v.y);
     const toNest = len(p.x - NEST.x, p.y - NEST.y);
 
-    if (this.phase === 'flying' && !this.fouled && toNest < NEST_R) {
+    if (SHOW_NEST && this.phase === 'flying' && !this.fouled && toNest < NEST_R) {
       this.phase = 'settling';
       this.bird.setGravityScale(0, true);
     }
@@ -398,8 +415,11 @@ export class Sim {
       const touched = this.bandTouches(this.prevX, this.prevY, p.x, p.y);
       this.prevX = p.x;
       this.prevY = p.y;
-      if (!touched) this.clearOfBand = true;
-      else if (this.clearOfBand) {
+      // The empty band whips through the pouch while the ball is still leaving.
+      // That pass is not a catch. A catch is a touch after the ball has turned back.
+      const outward = (p.x - POUCH.x) * v.x + (p.y - POUCH.y) * v.y;
+      if (!touched && outward <= 0) this.clearOfBand = true;
+      else if (this.clearOfBand && touched) {
         this.beginCatch();
         return;
       }
