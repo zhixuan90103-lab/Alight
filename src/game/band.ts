@@ -293,8 +293,10 @@ export class Band {
     const tx = px * pull;
     const ty = py * pull + -1 * (1 - pull);
     let target = Math.atan2(ty, tx);
-    // Upward is not a cradle direction. The band stays under the ball and tops out at its empty shape.
-    if (Math.sin(target) > 0) target = -Math.PI / 2;
+    // Between the anchors, any lift keeps the cradle under the ball.
+    // The blended aim can still point downhill for a frame, and that frame hooks over the crown.
+    const between = ballX > ANCHOR_L.x && ballX < ANCHOR_R.x;
+    if (between && ballY > POUCH.y) target = -Math.PI / 2;
     let delta = target - this.cupAngle;
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;

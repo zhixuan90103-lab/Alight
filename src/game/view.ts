@@ -133,7 +133,7 @@ export function createPlayView(scene: THREE.Scene): {
       const s = sim.sample();
       hum += dt;
       const atMax = s.phase === 'pulling' && s.strain >= 0.995;
-      const amp = atMax ? Math.sin(hum * 46) * 3.2 : 0;
+      const amp = atMax ? Math.sin(hum * 64) * 1.6 : 0;
       ball.position.set(s.birdX + s.aimX * amp, s.birdY + s.aimY * amp, 1);
       ball.visible = s.phase !== 'gone';
       const settling = s.phase === 'settling';
