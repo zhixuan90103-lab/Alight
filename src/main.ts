@@ -23,6 +23,7 @@ import { applyNativeClass, applySafeAreaCssVars, readSafeAreaInsets } from './ad
 import { createRenderer, resizeToDesign } from './create-renderer';
 import { designToWorld } from './game/frame';
 import { Sim } from './game/sim';
+import { BAG_Y, BIRD_R, LANE_X, SHOW_BAG } from './game/tune';
 import { mountTunePanel } from './game/tunePanel';
 import { createPlayView } from './game/view';
 import { haptics } from './utils/haptics';
@@ -51,6 +52,15 @@ async function boot(): Promise<void> {
   const view = createPlayView(scene);
   paintHearts(sim.hearts);
   const uiRoot = document.getElementById('ui-root');
+  const bagCounts = LANE_X.map((x, i) => {
+    const el = document.createElement('div');
+    el.className = 'bag-count';
+    el.style.left = `${x}px`;
+    el.style.top = `${BAG_Y[i] - BIRD_R - 22}px`;
+    el.textContent = '0/1';
+    uiRoot?.append(el);
+    return el;
+  });
   if (uiRoot) mountTunePanel(uiRoot, sim);
 
   let preview: DevicePreviewController;
@@ -127,6 +137,14 @@ async function boot(): Promise<void> {
       if (cue === 'asleep') void haptics.impact('heavy');
       if (cue === 'slip' || cue === 'miss' || cue === 'gone') void haptics.impact('rigid');
       if (cue === 'miss' || cue === 'gone') paintHearts(sim.hearts);
+    }
+    const bags = sim.sample().bags;
+    for (let i = 0; i < bagCounts.length; i++) {
+      const el = bagCounts[i];
+      const here = SHOW_BAG && !bags[i].gone;
+      el.style.display = here ? 'block' : 'none';
+      const text = bags[i].sealed ? '1/1' : '0/1';
+      if (el.textContent !== text) el.textContent = text;
     }
     view.sync(sim, dt);
     renderer.render(scene, view.camera);

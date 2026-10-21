@@ -1,29 +1,28 @@
 import * as THREE from 'three';
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 
-import { bagDepth, bagMouth, bagMouthHalf, bagOuterPoints } from './bag';
+import { bagStroke, bagStrokePoints } from './bag';
 import {
   BAGS,
   bandWidth,
   BIRD_R,
-  GROUND_Y,
   SHOW_BAG,
-  RIVET_R,
   SLINGS,
 } from './tune';
 import type { Sim } from './sim';
 
-function circle(radius: number, color: number): THREE.Mesh {
+function circle(radius: number, color: number, segments = 40): THREE.Mesh {
   const mesh = new THREE.Mesh(
-    new THREE.CircleGeometry(radius, 40),
+    new THREE.CircleGeometry(radius, segments),
     new THREE.MeshBasicMaterial({ color }),
   );
   return mesh;
 }
 
-const BALL = 0x2f80ed;
-const BALL_LIGHT = 0x8ebfff;
-const ROPE = 0x2c333a;
+/** Warm paper, ink mechanisms, one accent. Matches the flat black-prop reference. */
+const PAPER = 0xeae8e5;
+const INK = 0x1a1c22;
+const ACCENT = 0xff7a1a;
 
 /** At full draw the ball and the band hum along the pull. Anchors stay put, so the contact does not open a gap. */
 function humAlongForce(
@@ -43,17 +42,6 @@ function humAlongForce(
     const w = d <= contact ? 1 : Math.max(0, 1 - (d - contact) / (reach - contact));
     return { x: p.x + aimX * amp * w, y: p.y + aimY * amp * w };
   });
-}
-
-/** Filled silhouette. The top edge is only the drawing of the cloth; the mouth stays open in the sim. */
-function bagGeometry(): THREE.ShapeGeometry {
-  const mouth = bagMouth();
-  const pts = bagOuterPoints();
-  const shape = new THREE.Shape();
-  shape.moveTo(pts[0].x - mouth.x, pts[0].y - mouth.y);
-  for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x - mouth.x, pts[i].y - mouth.y);
-  shape.closePath();
-  return new THREE.ShapeGeometry(shape, 1);
 }
 
 const RIBBON_VERTS = 640;
@@ -174,7 +162,7 @@ export function createPlayView(scene: THREE.Scene): {
   camera: THREE.OrthographicCamera;
   sync: (sim: Sim, dt: number) => void;
 } {
-  scene.background = new THREE.Color(0xf2f3f5);
+  scene.background = new THREE.Color(PAPER);
 
   const camera = new THREE.OrthographicCamera(
     -DESIGN_WIDTH / 2,
@@ -188,54 +176,43 @@ export function createPlayView(scene: THREE.Scene): {
   camera.lookAt(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2, 0);
   camera.up.set(0, 1, 0);
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(DESIGN_WIDTH, GROUND_Y),
-    new THREE.MeshBasicMaterial({ color: 0xd5d8de }),
-  );
-  ground.position.set(DESIGN_WIDTH / 2, GROUND_Y / 2, 0);
-  scene.add(ground);
-  const groundH = GROUND_Y;
-
-  const bagMat = new THREE.MeshBasicMaterial({
-    color: BALL,
-    transparent: true,
-    opacity: 0.38,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-  const sealMat = new THREE.MeshBasicMaterial({
-    color: 0x1d5bb8,
-    transparent: true,
-    opacity: 0.85,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-  const bags = BAGS.map(() => {
-    const mesh = new THREE.Mesh(bagGeometry(), bagMat);
+  const bagRibbons = BAGS.map(() => {
+    const positions = new Float32Array(RIBBON_VERTS * 3);
+    const indices = new Uint32Array(RIBBON_INDICES);
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.setIndex(new THREE.BufferAttribute(indices, 1));
+    geom.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: ACCENT, side: THREE.DoubleSide }));
+    mesh.frustumCulled = false;
     mesh.renderOrder = 3;
     scene.add(mesh);
     return mesh;
   });
-  const seals = BAGS.map(() => {
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 6), sealMat);
-    mesh.renderOrder = 4;
-    scene.add(mesh);
-    return mesh;
-  });
-  let bagKey = -1;
-
-  const rivetMat = new THREE.MeshBasicMaterial({ color: ROPE });
-  const rivetHole = new THREE.MeshBasicMaterial({ color: 0xf2f3f5 });
+  const bagEnds: THREE.Mesh[] = [];
+  const bagEndMat = new THREE.MeshBasicMaterial({ color: ACCENT });
+  const rivetMat = new THREE.MeshBasicMaterial({ color: INK });
+  const rivetHole = new THREE.MeshBasicMaterial({ color: PAPER });
+  const rivetHeads: THREE.Mesh[] = [];
+  const rivetHoles: THREE.Mesh[] = [];
   for (const sling of SLINGS) {
     for (const rivet of [sling.left, sling.right]) {
-      const head = circle(RIVET_R, ROPE);
+      const head = circle(1, INK, 64);
       head.material = rivetMat;
       head.position.set(rivet.x, rivet.y, 0.7);
-      const hole = circle(RIVET_R * 0.38, 0xf2f3f5);
+      const hole = circle(1, PAPER, 64);
       hole.material = rivetHole;
       hole.position.set(rivet.x, rivet.y, 0.75);
+      rivetHeads.push(head);
+      rivetHoles.push(hole);
       scene.add(head, hole);
     }
+  }
+  for (let i = 0; i < BAGS.length * 2; i++) {
+    const end = circle(1, ACCENT, 64);
+    end.material = bagEndMat;
+    bagEnds.push(end);
+    scene.add(end);
   }
 
   const arcs = SLINGS.map(() => {
@@ -245,7 +222,7 @@ export function createPlayView(scene: THREE.Scene): {
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geom.setIndex(new THREE.BufferAttribute(indices, 1));
     geom.setDrawRange(0, 0);
-    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: ROPE, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: INK, side: THREE.DoubleSide }));
     mesh.frustumCulled = false;
     mesh.renderOrder = 1;
     scene.add(mesh);
@@ -253,11 +230,9 @@ export function createPlayView(scene: THREE.Scene): {
   });
 
   const balls = SLINGS.map(() => {
-    const body = circle(1, BALL);
-    const highlight = circle(0.38, BALL_LIGHT);
-    highlight.position.set(-0.28, 0.32, 0.2);
+    const body = circle(1, ACCENT);
     const group = new THREE.Group();
-    group.add(body, highlight);
+    group.add(body);
     group.renderOrder = 2;
     scene.add(group);
     return group;
@@ -269,29 +244,35 @@ export function createPlayView(scene: THREE.Scene): {
     sync(sim: Sim, dt: number) {
       const s = sim.sample();
       hum += dt;
-      const half = bagMouthHalf();
-      const key = half * 1000 + bagDepth();
-      if (key !== bagKey) {
-        bagKey = key;
-        for (const bag of bags) {
-          bag.geometry.dispose();
-          bag.geometry = bagGeometry();
-        }
-      }
-      for (let i = 0; i < bags.length; i++) {
-        const mouth = bagMouth(BAGS[i]);
+      for (let i = 0; i < bagRibbons.length; i++) {
         const bagState = s.bags[i];
+        const here = SHOW_BAG && !bagState.gone;
         const giveX = bagState.pressX * bagState.give * 0.55;
         const giveY = bagState.pressY * bagState.give * 0.55;
-        const here = SHOW_BAG && !bagState.gone;
-        bags[i].visible = here;
-        bags[i].position.set(mouth.x - giveX, mouth.y - giveY, 0.2);
-        seals[i].visible = here && bagState.sealed;
-        seals[i].position.set(mouth.x, mouth.y - 1, 0.4);
-        seals[i].scale.set(half * 2 + 10, 1, 1);
+        const pts = bagStrokePoints(BAGS[i]).map((p) => ({ x: p.x - giveX, y: p.y - giveY }));
+        const ribbon = bagRibbons[i];
+        ribbon.visible = here;
+        const geom = ribbon.geometry;
+        const attr = geom.getAttribute('position') as THREE.BufferAttribute;
+        const index = geom.getIndex() as THREE.BufferAttribute;
+        const stroke = bagStroke();
+        const count = writeRibbon(attr.array as Float32Array, index.array as Uint32Array, pts, stroke);
+        geom.setDrawRange(0, count);
+        attr.needsUpdate = true;
+        index.needsUpdate = true;
+        const endR = stroke / 2;
+        const tips = [pts[0], pts[pts.length - 1]];
+        for (let k = 0; k < 2; k++) {
+          const end = bagEnds[i * 2 + k];
+          end.visible = here;
+          end.position.set(tips[k].x, tips[k].y, 0.55);
+          end.scale.set(endR, endR, 1);
+        }
       }
-      ground.scale.y = GROUND_Y / groundH;
-      ground.position.y = GROUND_Y / 2;
+      const outer = (bandWidth(0) / 2) * 0.86;
+      const inner = outer * 0.78;
+      for (const head of rivetHeads) head.scale.set(outer, outer, 1);
+      for (const hole of rivetHoles) hole.scale.set(inner, inner, 1);
 
       for (let i = 0; i < s.shots.length; i++) {
         const shot = s.shots[i];
@@ -299,7 +280,7 @@ export function createPlayView(scene: THREE.Scene): {
         const amp = atMax ? Math.sin(hum * 64) * 1.6 : 0;
         const ball = balls[i];
         ball.position.set(shot.birdX + shot.aimX * amp, shot.birdY + shot.aimY * amp, 1);
-        ball.visible = shot.phase !== 'gone' && shot.phase !== 'asleep';
+        ball.visible = shot.phase !== 'gone';
         ball.scale.set(BIRD_R, BIRD_R, 1);
         const points = amp === 0 ? shot.band : humAlongForce(shot.band, shot.birdX, shot.birdY, shot.aimX, shot.aimY, amp);
         const geom = arcs[i].geometry;

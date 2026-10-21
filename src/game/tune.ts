@@ -38,10 +38,8 @@ export function bandWidth(strain: number): number {
  * and the rope dips under the ball. Heavier balls use the same rope and hang lower.
  */
 const CRADLE_RISE = 12;
-/** Fixed end of a band. Blocks the ball and bounces a flying one. */
+/** Drawn rivet radius. Rivets do not block the ball. */
 export const RIVET_R = 5;
-/** Share of the incoming speed kept after a rivet bounce. The ground stays nearly dead. */
-export const RIVET_BOUNCE = 0.25;
 
 export const POUCH = designToWorld(195, 612);
 

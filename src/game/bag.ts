@@ -1,18 +1,9 @@
-import {
-  BAG_GIVE,
-  BAG_ZETA,
-  BIRD_R,
-  MASS,
-  STEP,
-  STIFFNESS,
-  BAG_AT,
-} from './tune';
+import { BIRD_R, ROPE_THICKNESS, BAG_AT } from './tune';
 
-const MOUTH_CLEAR = 14;
-const SIDE_BULGE = 8;
-const SEAT_PAD = 10;
-
-export type BagHit = { nx: number; ny: number; signed: number; cx: number; cy: number };
+/** Same rest width as the band. A full pull thins only the band. */
+export function bagStroke(): number {
+  return ROPE_THICKNESS;
+}
 
 /** Cloth contact. The normal stays the one from the first touch. */
 export type Cloth = {
@@ -28,46 +19,78 @@ export function clearCloth(): Cloth {
   return { on: false, nx: 0, ny: 1, cx: 0, cy: 0, give: 0 };
 }
 
+/** Inner half-width of the lip. Wider than the ball, with a short rim. */
 export function bagMouthHalf(): number {
-  return BIRD_R + MOUTH_CLEAR;
+  return BIRD_R * 1.45;
 }
 
+/** How far the round seat sits below the lip. */
 export function bagDepth(): number {
-  return BIRD_R * 2 + 36;
+  return BIRD_R * 1.15;
 }
 
-/** Mouth center. The opening faces up. */
+/** Lip center. The opening faces up. */
 export function bagMouth(at: { x: number; y: number } = BAG_AT): { x: number; y: number } {
   return { x: at.x, y: at.y + BIRD_R + 10 };
 }
 
-/** Rest point, one radius above the inner bottom. */
+/** Ball center, in the round bottom. */
 export function bagSeat(at: { x: number; y: number } = BAG_AT): { x: number; y: number } {
   const mouth = bagMouth(at);
-  return { x: mouth.x, y: mouth.y - (bagDepth() - BIRD_R - SEAT_PAD) };
+  return { x: mouth.x, y: mouth.y - bagDepth() };
 }
 
-/**
- * U-shaped outline, mouth open between the first point and the last.
- * The view fills this same line. There is no extra lip.
- */
-export function bagOuterPoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
-  const mouth = bagMouth(at);
-  const bulge = bagMouthHalf() + SIDE_BULGE;
-  const side = Math.max(8, bagDepth() - bulge);
-  const points: Array<{ x: number; y: number }> = [];
-  const add = (lx: number, ly: number) => {
-    points.push({ x: mouth.x + lx, y: mouth.y + ly });
+/** Lower touch point of the line from the lip onto the seat circle. */
+function lowerTangent(
+  seat: { x: number; y: number },
+  radius: number,
+  from: { x: number; y: number },
+): { x: number; y: number } {
+  const dx = from.x - seat.x;
+  const dy = from.y - seat.y;
+  const d2 = dx * dx + dy * dy;
+  const reach = Math.sqrt(Math.max(0, d2 - radius * radius));
+  const a = {
+    x: seat.x + (radius * radius * dx - radius * reach * dy) / d2,
+    y: seat.y + (radius * radius * dy + radius * reach * dx) / d2,
   };
-  add(-bulge, 0);
-  add(-bulge, -side);
-  const arc = 8;
-  for (let i = 0; i <= arc; i++) {
-    const a = Math.PI + (i / arc) * Math.PI;
-    add(Math.cos(a) * bulge, -side + Math.sin(a) * bulge);
+  const b = {
+    x: seat.x + (radius * radius * dx + radius * reach * dy) / d2,
+    y: seat.y + (radius * radius * dy - radius * reach * dx) / d2,
+  };
+  return a.y < b.y ? a : b;
+}
+
+/** Short straight rim, then the round seat. The rim meets the seat on its tangent. */
+function bowl(at: { x: number; y: number }, seatR: number, mouthHalf: number): Array<{ x: number; y: number }> {
+  const mouth = bagMouth(at);
+  const seat = bagSeat(at);
+  const left = { x: mouth.x - mouthHalf, y: mouth.y };
+  const right = { x: mouth.x + mouthHalf, y: mouth.y };
+  const tl = lowerTangent(seat, seatR, left);
+  const tr = lowerTangent(seat, seatR, right);
+  let a0 = Math.atan2(tl.y - seat.y, tl.x - seat.x);
+  let a1 = Math.atan2(tr.y - seat.y, tr.x - seat.x);
+  if (a1 < a0) a1 += Math.PI * 2;
+  const points: Array<{ x: number; y: number }> = [left];
+  const steps = 16;
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + ((a1 - a0) * i) / steps;
+    points.push({ x: seat.x + Math.cos(a) * seatR, y: seat.y + Math.sin(a) * seatR });
   }
-  add(bulge, 0);
+  points.push(right);
   return points;
+}
+
+/** Inner edge. The lip is the mouth. The seat matches the ball. */
+export function bagOuterPoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
+  return bowl(at, BIRD_R, bagMouthHalf());
+}
+
+/** Stroke centerline, one half-width outside the inner edge. */
+export function bagStrokePoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
+  const half = bagStroke() / 2;
+  return bowl(at, BIRD_R + half, bagMouthHalf() + half);
 }
 
 export function aboveOpenMouth(x: number, y: number, at: { x: number; y: number } = BAG_AT): boolean {
@@ -77,19 +100,31 @@ export function aboveOpenMouth(x: number, y: number, at: { x: number; y: number 
   return y >= left.y && x > left.x && x < right.x;
 }
 
-/** Center fell across the opening. The side walls stay solid. */
-export function enteredMouth(x0: number, y0: number, x1: number, y1: number, at: { x: number; y: number } = BAG_AT): boolean {
+/** Where the center crosses the lip, or null if it does not enter. */
+export function mouthEntry(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  at: { x: number; y: number } = BAG_AT,
+): { x: number; y: number } | null {
   const pts = bagOuterPoints(at);
   const left = pts[0];
   const right = pts[pts.length - 1];
   const mouthY = left.y;
-  if (y0 < mouthY || y1 > mouthY) return false;
+  if (y0 < mouthY || y1 > mouthY) return null;
   const dy = y1 - y0;
-  if (dy === 0) return false;
+  if (dy === 0) return null;
   const t = (mouthY - y0) / dy;
-  if (t < 0 || t > 1) return false;
+  if (t < 0 || t > 1) return null;
   const x = x0 + (x1 - x0) * t;
-  return x > left.x + 2 && x < right.x - 2;
+  if (x <= left.x + 2 || x >= right.x - 2) return null;
+  return { x, y: mouthY };
+}
+
+/** Center fell across the opening. The side walls stay solid. */
+export function enteredMouth(x0: number, y0: number, x1: number, y1: number, at: { x: number; y: number } = BAG_AT): boolean {
+  return mouthEntry(x0, y0, x1, y1, at) !== null;
 }
 
 function pointInBag(px: number, py: number, pts: ReadonlyArray<{ x: number; y: number }>): boolean {
@@ -104,99 +139,73 @@ function pointInBag(px: number, py: number, pts: ReadonlyArray<{ x: number; y: n
   return crossings % 2 === 1;
 }
 
-/** Nearest overlap with the outline. The mouth edge exists only after the bag is sealed. */
-export function bagContact(px: number, py: number, sealed: boolean, at: { x: number; y: number } = BAG_AT): BagHit | null {
+/** Hard bowl. Outside hits bounce a little. Inside, the ball slides and stays in the cup. */
+export function resolveBowl(
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  sealed: boolean,
+  at: { x: number; y: number } = BAG_AT,
+): { x: number; y: number; vx: number; vy: number; hit: boolean; impact: number } {
   const pts = bagOuterPoints(at);
-  const inside = pointInBag(px, py, pts);
+  const inside = pointInBag(x, y, pts);
   const edges = sealed ? pts.length : pts.length - 1;
-  let best: BagHit | null = null;
-  const r = BIRD_R;
+  let best: { dist: number; nx: number; ny: number } | null = null;
+  let areaX = 0;
+  let areaY = 0;
+  for (const p of pts) {
+    areaX += p.x;
+    areaY += p.y;
+  }
+  areaX /= pts.length;
+  areaY /= pts.length;
   for (let i = 0; i < edges; i++) {
-    const a = pts[i % pts.length];
+    const a = pts[i];
     const b = pts[(i + 1) % pts.length];
     const evx = b.x - a.x;
     const evy = b.y - a.y;
     const l2 = evx * evx + evy * evy || 1e-8;
-    let t = ((px - a.x) * evx + (py - a.y) * evy) / l2;
+    let t = ((x - a.x) * evx + (y - a.y) * evy) / l2;
     t = Math.max(0, Math.min(1, t));
     const cx = a.x + evx * t;
     const cy = a.y + evy * t;
-    const dx = px - cx;
-    const dy = py - cy;
-    const dist = Math.hypot(dx, dy) || 1e-8;
+    const dist = Math.hypot(x - cx, y - cy);
     const nlen = Math.hypot(evy, -evx) || 1;
-    const ox = evy / nlen;
-    const oy = -evx / nlen;
-    if (inside) {
-      if (!best || dist < -best.signed) best = { nx: ox, ny: oy, signed: -dist, cx, cy };
-      continue;
+    let nx = evy / nlen;
+    let ny = -evx / nlen;
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    if ((areaX - mx) * nx + (areaY - my) * ny > 0) {
+      nx = -nx;
+      ny = -ny;
     }
-    if (dist >= r) continue;
-    if (!best || dist < best.signed) best = { nx: dx / dist, ny: dy / dist, signed: dist, cx, cy };
+    if (!best || dist < best.dist) best = { dist, nx, ny };
   }
-  return best;
-}
-
-export type ClothMove = { cloth: Cloth; x: number; y: number; vx: number; vy: number; held: boolean };
-
-/** Start or continue a one-sided push. The spring never pulls the ball back onto the cloth. */
-export function touchCloth(cloth: Cloth, hit: BagHit, x: number, y: number, vx: number, vy: number): ClothMove {
-  const next = cloth.on
-    ? cloth
-    : { on: true, nx: hit.nx, ny: hit.ny, cx: hit.cx, cy: hit.cy, give: 0 };
-  return pushCloth(next, x, y, vx, vy);
-}
-
-export function pushCloth(cloth: Cloth, x: number, y: number, vx: number, vy: number): ClothMove {
-  const relX = x - cloth.cx;
-  const relY = y - cloth.cy;
-  const tangent = relX * -cloth.ny + relY * cloth.nx;
-  if (Math.abs(tangent) > BIRD_R + 4) {
-    return { cloth: clearCloth(), x, y, vx, vy, held: false };
+  if (!best || best.dist >= BIRD_R) return { x, y, vx, vy, hit: false, impact: 0 };
+  const pen = BIRD_R - best.dist;
+  const nx = best.nx;
+  const ny = best.ny;
+  const vn = vx * nx + vy * ny;
+  if (inside) {
+    x -= nx * pen;
+    y -= ny * pen;
+    if (vn > 0) {
+      vx -= nx * vn * 1.4;
+      vy -= ny * vn * 1.4;
+    }
+    const vn2 = vx * nx + vy * ny;
+    const tx = vx - vn2 * nx;
+    const ty = vy - vn2 * ny;
+    vx = vn2 * nx + tx * 0.96;
+    vy = vn2 * ny + ty * 0.96;
+    return { x, y, vx, vy, hit: true, impact: Math.max(0, vn) };
   }
-  const signed = relX * cloth.nx + relY * cloth.ny;
-  let pen = BIRD_R - signed;
-  if (pen <= 0) return leaveCloth(cloth, x, y, vx, vy);
-  if (pen > BAG_GIVE) {
-    const fix = pen - BAG_GIVE;
-    x += cloth.nx * fix;
-    y += cloth.ny * fix;
-    pen = BAG_GIVE;
-  }
-  const vn0 = vx * cloth.nx + vy * cloth.ny;
-  let vn = vn0;
-  if (pen >= BAG_GIVE && vn < 0) vn = 0;
-  const omega = Math.sqrt(STIFFNESS / MASS);
-  const an = omega * omega * pen - 2 * BAG_ZETA * omega * vn;
-  vn += an * STEP;
-  vx += (vn - vn0) * cloth.nx;
-  vy += (vn - vn0) * cloth.ny;
-  return { cloth: { ...cloth, give: pen }, x, y, vx, vy, held: true };
-}
-
-function leaveCloth(cloth: Cloth, x: number, y: number, vx: number, vy: number): ClothMove {
-  const vn = vx * cloth.nx + vy * cloth.ny;
+  x += nx * pen;
+  y += ny * pen;
   if (vn < 0) {
-    const out = -0.1 * vn;
-    vx += (out - vn) * cloth.nx;
-    vy += (out - vn) * cloth.ny;
+    vx -= nx * vn * 1.22;
+    vy -= ny * vn * 1.22;
   }
-  return { cloth: clearCloth(), x, y, vx, vy, held: false };
-}
-
-/** Seat spring. Same stiffness as the band, bag damping instead of band damping. */
-export function bagSpring(x: number, y: number, vx: number, vy: number, at: { x: number; y: number } = BAG_AT): { x: number; y: number; vx: number; vy: number; rested: boolean } {
-  const seat = bagSeat(at);
-  const ux = x - seat.x;
-  const uy = y - seat.y;
-  const omega = Math.sqrt(STIFFNESS / MASS);
-  const ax = -omega * omega * ux - 2 * BAG_ZETA * omega * vx;
-  const ay = -omega * omega * uy - 2 * BAG_ZETA * omega * vy;
-  vx += ax * STEP;
-  vy += ay * STEP;
-  x += vx * STEP;
-  y += vy * STEP;
-  const rested = Math.hypot(x - seat.x, y - seat.y) < 0.4 && Math.hypot(vx, vy) < 2;
-  if (rested) return { x: seat.x, y: seat.y, vx: 0, vy: 0, rested: true };
-  return { x, y, vx, vy, rested: false };
+  return { x, y, vx, vy, hit: true, impact: Math.max(0, -vn) };
 }
