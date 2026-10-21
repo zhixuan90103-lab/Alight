@@ -2,7 +2,7 @@
 
 配套：[GAME-RULES.md](./GAME-RULES.md) · [AGENTS.md](../AGENTS.md) · [ENGINEERING.md](./ENGINEERING.md)
 
-第一关和第二关都在 `src/game/`。第一关是五颗金球、最右边一根皮筋、最左边一只大 U。第二关是三黄三蓝、正中一根同样高的皮筋、左上黄 U 和右上蓝 U，两只碗更小。能进几颗只看形状和物理。错色的球留在碗里。过关见第 8 节：每只碗里至少有一颗同色的球。残影和音效还没做。刚体材料以本文第 7 节为准，画面以第 10 节为准。其余规则以 [GAME-RULES.md](./GAME-RULES.md) 为准。关卡摆放在 `loadLevelLayout`（`src/game/tune.ts`）。
+第一关和第二关都在 `src/game/`。第一关是五颗金球、最右边一根皮筋、最左边一只大 U。第二关是三黄三蓝、正中一根同样高的皮筋、左上黄 U 和右上蓝 U，两只碗更小。能进几颗只看形状和物理。错色的球留在碗里。过关见第 8 节：每只碗里至少有一颗同色的球。残影和音效还没做。刚体材料以本文第 7 节为准，画面以第 10 节为准。其余规则以 [GAME-RULES.md](./GAME-RULES.md) 为准。关卡摆放和补球方式在 `loadLevelLayout`（`src/game/tune.ts`）。`REFILL_MODE` 为 `each-band` 或 `same-color`。`SLING_COLOR` 是每根皮筋补的颜色。
 
 ## 1. 放在哪
 

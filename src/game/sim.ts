@@ -16,7 +16,8 @@ import {
   BIRD_R,
   EXIT,
   LEVEL_BALLS,
-  LEVEL_ID,
+  REFILL_MODE,
+  SLING_COLOR,
   DEAD_PULL,
   GRAVITY,
   MASS,
@@ -320,8 +321,8 @@ export class Sim {
    */
   result(): { passed: boolean } | null {
     if (this.shots.some((shot) => shot.phase !== 'gone' || shot.refill >= 0)) return null;
-    if (LEVEL_ID === 2) {
-      if ((['blue', 'gold'] as const).some((color) => this.canRefresh(color))) return null;
+    if (REFILL_MODE === 'same-color') {
+      if (SLING_COLOR.some((color) => this.canRefresh(color))) return null;
     } else if (this.stock > 0) return null;
     const passed = BAGS.every((_, index) => this.parked.some((ball) => {
       const p = ball.bird.translation();
@@ -789,7 +790,7 @@ export class Sim {
     const color = shot.color;
     shot.phase = 'gone';
     shot.refill = -1;
-    if (LEVEL_ID === 2) this.settledColors.push(color);
+    if (REFILL_MODE === 'same-color') this.settledColors.push(color);
     else if (this.remaining(this.colorFor(shot)) > 0) shot.refill = REFILL_DELAY;
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
@@ -816,11 +817,11 @@ export class Sim {
     this.parked.push({ bird: shot.bird, collider: shot.collider, color: shot.color });
     shot.phase = 'gone';
     shot.refill = -1;
-    if (LEVEL_ID === 2) this.settledColors.push(shot.color);
+    if (REFILL_MODE === 'same-color') this.settledColors.push(shot.color);
     else this.issue(shot);
   }
 
-  /** Level 2: the next ball of a color waits until the previous one has died or landed in a bowl. */
+  /** Same-color mode: the next ball waits until the previous one has died or landed in a bowl. */
   private alive(color: BallColor): number {
     const used = this.issuedColors.filter((item) => item === color).length;
     const settled = this.settledColors.filter((item) => item === color).length;
@@ -828,17 +829,17 @@ export class Sim {
   }
 
   private canRefresh(color: BallColor): boolean {
-    return this.remaining(color) > 0 && (LEVEL_ID !== 2 || this.alive(color) === 0);
+    return this.remaining(color) > 0 && (REFILL_MODE !== 'same-color' || this.alive(color) === 0);
   }
 
   private homeShot(color: BallColor): Shot {
-    if (LEVEL_ID !== 2 || color === 'gold') return this.shots[this.shots.length - 1];
-    return this.shots[0];
+    const index = SLING_COLOR.indexOf(color);
+    return this.shots[index >= 0 ? index : this.shots.length - 1];
   }
 
   private pumpRefill(): void {
-    if (LEVEL_ID !== 2) return;
-    for (const color of ['blue', 'gold'] as const) {
+    if (REFILL_MODE !== 'same-color') return;
+    for (const color of SLING_COLOR) {
       if (!this.canRefresh(color)) continue;
       const home = this.homeShot(color);
       const index = this.shots.indexOf(home);
@@ -847,10 +848,10 @@ export class Sim {
     }
   }
 
-  /** Level 2: the left band only drops blue, the right band only drops gold. */
+  /** The color this band drops. It stays with the band when a ball is handed across. */
   private colorFor(shot: Shot): BallColor {
-    if (LEVEL_ID !== 2) return 'gold';
-    return SLINGS.indexOf(shot.sling) === 0 ? 'blue' : 'gold';
+    const index = SLINGS.indexOf(shot.sling);
+    return SLING_COLOR[index] ?? 'gold';
   }
 
   private remaining(color: BallColor): number {
@@ -912,7 +913,7 @@ export class Sim {
       return;
     }
     if (this.sealedInBowl(p.x, p.y)) {
-      if (LEVEL_ID === 2) {
+      if (REFILL_MODE === 'same-color') {
         this.arrive(shot);
         return;
       }
