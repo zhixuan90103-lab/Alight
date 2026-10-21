@@ -52,25 +52,14 @@ function format(value: number, step: number): string {
   return value.toFixed(digits);
 }
 
-/** Same marks as SlidetoWord: a gear character and a replay arrow character. */
-export function hudGlyph(kind: 'settings' | 'replay'): HTMLElement {
-  const el = document.createElement('span');
-  el.className = 'hud-glyph';
-  el.setAttribute('aria-hidden', 'true');
-  el.textContent = kind === 'settings' ? '\u2699\uFE0E' : '\u21BB';
+/** Phosphor Light icons in public/icons. */
+export function hudIcon(name: 'gear' | 'arrow-clockwise' | 'arrow-right' | 'star' | 'star-fill'): HTMLImageElement {
+  const el = document.createElement('img');
+  el.className = 'hud-icon';
+  el.alt = '';
+  el.draggable = false;
+  el.src = `./icons/${name}.svg`;
   return el;
-}
-
-export function hudIcon(kind: 'next' | 'star'): string {
-  const mark =
-    kind === 'next'
-      ? '<path d="M5 12h12M13 6l6 6-6 6"/>'
-      : '<path d="M12 3.2l2.4 5.2 5.6.6-4.2 3.8 1.2 5.5L12 15.6 6.9 18.3l1.2-5.5L4 9l5.6-.6z"/>';
-  const paint = kind === 'star' ? '' : 'fill="none"';
-  return `<svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true" ${paint}>
-    <g class="hud-icon-shade" transform="translate(1.2 1.4)">${mark}</g>
-    <g class="hud-icon-face">${mark}</g>
-  </svg>`;
 }
 
 /** On-stage sliders. The gear pill opens them. Values write the live tune. */
@@ -79,7 +68,7 @@ export function mountTunePanel(uiRoot: HTMLElement, actions: HTMLElement, sim: S
   head.type = 'button';
   head.className = 'hud-icon-btn';
   head.setAttribute('aria-label', '设置');
-  head.append(hudGlyph('settings'));
+  head.append(hudIcon('gear'));
   actions.append(head);
 
   const root = document.createElement('section');

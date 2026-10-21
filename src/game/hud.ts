@@ -2,7 +2,7 @@ import { bagMouth } from './bag';
 import { worldToDesign } from './frame';
 import type { Sim, SimSample } from './sim';
 import { BAGS, LEVEL_BALLS, SHOW_BAG } from './tune';
-import { hudGlyph, hudIcon, mountTunePanel } from './tunePanel';
+import { hudIcon, mountTunePanel } from './tunePanel';
 
 /** Design pixels from the bowl lip down to the score. */
 const BAG_COUNT_DROP = 28;
@@ -52,7 +52,7 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
   const actions = document.createElement('div');
   actions.id = 'hud-actions';
   const again = iconButton('重玩');
-  again.append(hudGlyph('replay'));
+  again.append(hudIcon('arrow-clockwise'));
   again.addEventListener('click', replay);
 
   top.append(balls, actions);
@@ -74,7 +74,7 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
   for (let i = 0; i < 3; i++) {
     const star = document.createElement('span');
     star.className = 'result-star';
-    star.innerHTML = hudIcon('star');
+    star.append(hudIcon('star'));
     stars.append(star);
     starEls.push(star);
   }
@@ -82,11 +82,11 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
   const resultActions = document.createElement('div');
   resultActions.id = 'result-actions';
   const resultReplay = iconButton('重玩');
-  resultReplay.append(hudGlyph('replay'));
+  resultReplay.append(hudIcon('arrow-clockwise'));
   resultReplay.addEventListener('click', replay);
 
   const next = iconButton('下一关');
-  next.innerHTML = hudIcon('next');
+  next.append(hudIcon('arrow-right'));
 
   resultActions.append(resultReplay, next);
   card.append(stars, resultActions);
@@ -122,7 +122,10 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
       }
     },
     showResult(count: number) {
-      starEls.forEach((el, i) => el.classList.toggle('is-on', i < count));
+      starEls.forEach((el, i) => {
+        const img = el.querySelector('img');
+        if (img) img.src = `./icons/${i < count ? 'star-fill' : 'star'}.svg`;
+      });
       next.hidden = count <= 0;
       actions.hidden = true;
       result.hidden = false;

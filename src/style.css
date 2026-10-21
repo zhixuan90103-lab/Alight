@@ -181,48 +181,11 @@ body {
   display: none;
 }
 
-.hud-icon {
-  width: 28px;
-  height: 28px;
-  display: block;
-}
-
-.hud-icon-shade,
-.hud-icon-face {
-  fill: none;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.hud-icon-shade {
-  stroke: #c49a55;
-}
-
-.hud-icon-face {
-  stroke: var(--gold);
-}
-
-.hud-icon-btn .hud-icon-shade {
-  display: none;
-}
-
-.hud-icon-btn .hud-icon-face {
-  stroke: #4a4a4a;
-}
-
-.hud-glyph {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  color: #4a4a4a;
+.hud-icon-btn .hud-icon {
+  width: 22px;
+  height: 22px;
   opacity: 0.5;
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 22px;
-  font-weight: 400;
-  line-height: 1;
+  display: block;
 }
 
 #balls {
@@ -293,26 +256,7 @@ body {
 .result-star .hud-icon {
   width: 36px;
   height: 36px;
-}
-
-.result-star .hud-icon-shade,
-.result-star .hud-icon-face {
-  stroke: none;
-}
-
-.result-star .hud-icon-shade {
-  fill: #608ab6;
-}
-
-.result-star .hud-icon-face {
-  fill: none;
-  stroke: var(--gold);
-  stroke-width: 1.6;
-}
-
-.result-star.is-on .hud-icon-face {
-  fill: var(--gold);
-  stroke: none;
+  display: block;
 }
 
 .tune-body {
