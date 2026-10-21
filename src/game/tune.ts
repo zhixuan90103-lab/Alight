@@ -27,6 +27,9 @@ export let BALL_DAMPING = 0;
 export let BAG_RESTITUTION = 0.25;
 /** Wooden bowl friction. Also its fixture damping. The panel edits this live. */
 export let BAG_FRICTION = 2;
+/** Vertical board. Its own bounce, not the bowl's. The panel edits these live. */
+export let PLANK_RESTITUTION = 0.4;
+export let PLANK_FRICTION = 0.4;
 export let DEAD_PULL = 28;
 export let BIRD_R = 18;
 export let ROPE_THICKNESS = 7;
@@ -78,7 +81,7 @@ export type BallColor = 'gold' | 'blue';
 /** Flat colors. Gold is the level-1 ball. Blue is darker than the field so it stays readable. */
 export const BALL_HEX: Record<BallColor, number> = {
   gold: 0xecbf77,
-  blue: 0x6fadec,
+  blue: 0x4d95dc,
 };
 
 export type BagSpec = {
@@ -91,10 +94,10 @@ export type BagSpec = {
   quota: number;
 };
 
-/** Which level is on screen. 1 is the single gold U. 2 is the two-color pair. */
+/** Which level is on screen. 1 is the single gold U. 2 is the two-color pair. 3 adds a fixed board. */
 export let LEVEL_ID = 1;
-export const LEVEL_COUNT = 2;
-/** Color match decides the stars. Level 1 scores how many balls are in the U. */
+export const LEVEL_COUNT = 3;
+/** Level 2 checks each bowl's color. Level 1 and 3 only have a gold bowl. */
 export let COLOR_SCORE = false;
 /** Issue order. Level 1 is five gold. Level 2 alternates, gold first. */
 export const BALL_QUEUE: BallColor[] = [];
@@ -106,6 +109,9 @@ export const SLINGS: Sling[] = [slingAt(312 - BIRD_R)];
 /** Lip anchors, world space. Parallel to `BAG_SPEC`. */
 export const BAGS: Array<{ x: number; y: number }> = [];
 export const BAG_SPEC: BagSpec[] = [];
+/** Fixed boards. Center and half-size are world pixels. `vertical` stands the board up and rounds both ends. */
+export type Plank = { x: number; y: number; halfW: number; halfH: number; vertical: boolean };
+export const PLANKS: Plank[] = [];
 /**
  * Where the next ball appears. Design y is down.
  * Measured from the marked point directly above the pouch.
@@ -128,12 +134,14 @@ function addBag(x: number, yDown: number, spec: BagSpec): void {
 
 /** Move the bands and the bowls. Does not reset the simulation. */
 export function loadLevelLayout(id: number): void {
-  const level = id === 2 ? 2 : 1;
+  const level = id === 3 ? 3 : id === 2 ? 2 : 1;
   LEVEL_ID = level;
   BAGS.length = 0;
   BAG_SPEC.length = 0;
   BALL_QUEUE.length = 0;
-  const slingX = level === 2 ? [96, 294] : [312 - BIRD_R];
+  PLANKS.length = 0;
+  const bowlX = 78 + BIRD_R * 2.2;
+  const slingX = level === 2 ? [124, 266] : level === 3 ? [bowlX] : [312 - BIRD_R];
   while (SLINGS.length < slingX.length) SLINGS.push(slingAt(slingX[SLINGS.length]));
   SLINGS.length = slingX.length;
   for (let i = 0; i < slingX.length; i++) {
@@ -149,13 +157,18 @@ export function loadLevelLayout(id: number): void {
     LEVEL_BALLS = 6;
     BALL_QUEUE.push('blue', 'blue', 'blue', 'gold', 'gold', 'gold');
     const small: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 2.4, quota: 3 };
-    addBag(96, 248, { color: 'gold', ...small });
-    addBag(294, 248, { color: 'blue', ...small });
+    addBag(84, 248, { color: 'gold', ...small });
+    addBag(306, 248, { color: 'blue', ...small });
   } else {
     COLOR_SCORE = false;
     LEVEL_BALLS = 5;
     BALL_QUEUE.push('gold', 'gold', 'gold', 'gold', 'gold');
-    addBag(78 + BIRD_R * 2.2, 268, { color: 'gold', mouthScale: 3.2, legScale: 4.6, quota: 5 });
+    const bowlY = level === 3 ? 308 : 268;
+    addBag(bowlX, bowlY, { color: 'gold', mouthScale: 3.2, legScale: 4.6, quota: 5 });
+    if (level === 3) {
+      const center = designToWorld(336, 350);
+      PLANKS.push({ x: center.x, y: center.y, halfW: 6, halfH: 108, vertical: true });
+    }
   }
   refreshDerived();
 }
@@ -191,6 +204,8 @@ export type TunePatch = {
   ballDamping?: number;
   bagRestitution?: number;
   bagFriction?: number;
+  plankRestitution?: number;
+  plankFriction?: number;
   deadPull?: number;
   birdR?: number;
   ropeThickness?: number;
@@ -233,6 +248,8 @@ export function writeTune(patch: TunePatch): void {
   if (patch.ballDamping !== undefined) BALL_DAMPING = patch.ballDamping;
   if (patch.bagRestitution !== undefined) BAG_RESTITUTION = patch.bagRestitution;
   if (patch.bagFriction !== undefined) BAG_FRICTION = patch.bagFriction;
+  if (patch.plankRestitution !== undefined) PLANK_RESTITUTION = patch.plankRestitution;
+  if (patch.plankFriction !== undefined) PLANK_FRICTION = patch.plankFriction;
   if (patch.deadPull !== undefined) DEAD_PULL = patch.deadPull;
   if (patch.birdR !== undefined) BIRD_R = patch.birdR;
   if (patch.ropeThickness !== undefined) ROPE_THICKNESS = patch.ropeThickness;
@@ -249,6 +266,11 @@ export function ballMaterial(): Material {
 
 export function woodMaterial(): Material {
   return fixtureMaterial(BAG_RESTITUTION, BAG_FRICTION);
+}
+
+/** The vertical board. Not the bowl. */
+export function plankMaterial(): Material {
+  return fixtureMaterial(PLANK_RESTITUTION, PLANK_FRICTION);
 }
 
 /** Empty-band height at this x. Outside the anchors the curve is the anchor height. */

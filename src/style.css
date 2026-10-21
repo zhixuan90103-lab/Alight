@@ -119,21 +119,6 @@ body {
   padding-left: calc(var(--safe-left) + var(--ui-pad-x));
 }
 
-.bag-count {
-  position: absolute;
-  transform: translate(-50%, -100%);
-  color: var(--gold);
-  font-size: 26px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  pointer-events: none;
-}
-
-.bag-count.is-blue {
-  color: #6fadec;
-}
-
 #hud {
   flex: 1;
   display: flex;
@@ -208,7 +193,7 @@ body {
 }
 
 .ball-pip.is-blue {
-  background: #6fadec;
+  background: #4d95dc;
 }
 
 .ball-pip.is-empty {
@@ -218,7 +203,7 @@ body {
 }
 
 .ball-pip.is-blue.is-empty {
-  border-color: #6fadec;
+  border-color: #4d95dc;
 }
 
 #tune {
@@ -258,17 +243,17 @@ body {
   display: none;
 }
 
-#result-stars,
+#result-verdict {
+  color: var(--gold);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 #result-actions {
   display: flex;
   gap: 14px;
   align-items: center;
-}
-
-.result-star .hud-icon {
-  width: 36px;
-  height: 36px;
-  display: block;
 }
 
 .tune-body {

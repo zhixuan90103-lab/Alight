@@ -23,7 +23,7 @@ import { applyNativeClass, applySafeAreaCssVars, readSafeAreaInsets } from './ad
 import { createRenderer, resizeToDesign } from './create-renderer';
 import { designToWorld } from './game/frame';
 import { Sim } from './game/sim';
-import { mountHud, starsFor } from './game/hud';
+import { mountHud } from './game/hud';
 import { LEVEL_COUNT, LEVEL_ID } from './game/tune';
 import { createPlayView } from './game/view';
 import { beginCharge, endCharge, updateCharge } from './game/pullHaptics';
@@ -60,9 +60,9 @@ async function boot(): Promise<void> {
           sim.restart();
         },
         () => {
-          if (LEVEL_ID >= 2) return;
+          if (LEVEL_ID >= LEVEL_COUNT) return;
           clearResult();
-          sim.loadLevel(2);
+          sim.loadLevel(LEVEL_ID + 1);
         },
         () => {
           clearResult();
@@ -149,7 +149,7 @@ async function boot(): Promise<void> {
           resultShown = true;
           pointerId = null;
           sim.cancelPull();
-          hud.showResult(starsFor(outcome));
+          hud.showResult(outcome.passed);
         }
       }
     }

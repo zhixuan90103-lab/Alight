@@ -8,8 +8,8 @@ import {
   BAG_SPEC,
   BALL_QUEUE,
   ballMaterial,
+  plankMaterial,
   woodMaterial,
-  COLOR_SCORE,
   loadLevelLayout,
   type BallColor,
   BAND_ZETA,
@@ -25,6 +25,7 @@ import {
   SHOW_BAG,
   ROPE_MASS,
   ROPE_THICKNESS,
+  PLANKS,
   SLINGS,
   STEP,
   STIFFNESS,
@@ -123,6 +124,7 @@ const OPEN_DELAY = 0.45;
 export class Sim {
   readonly world: RAPIER.World;
   private bagColliders: RAPIER.Collider[] = [];
+  private plankColliders: RAPIER.Collider[] = [];
   private readonly bagHandles = new Set<number>();
   private readonly events = new RAPIER.EventQueue(false);
   private readonly shots: Shot[];
@@ -140,6 +142,8 @@ export class Sim {
   /** Balls already dropped from the exit. Each one is an empty pip, from the left. */
   private issued = 0;
   private issuedColors: BallColor[] = [];
+  /** Level 2: same-color balls that died or landed in a bowl. */
+  private settledColors: BallColor[] = [];
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
@@ -221,8 +225,7 @@ export class Sim {
     for (const collider of this.bagColliders) this.world.removeCollider(collider, true);
     this.bagColliders = [];
     this.bagHandles.clear();
-    if (!SHOW_BAG) return;
-    for (let i = 0; i < BAGS.length; i++) {
+    if (SHOW_BAG) for (let i = 0; i < BAGS.length; i++) {
       const pts = bagOuterPoints(BAGS[i], i);
       const vertices = new Float32Array(pts.length * 2);
       for (let i = 0; i < pts.length; i++) {
@@ -235,6 +238,32 @@ export class Sim {
       collider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
       this.bagHandles.add(collider.handle);
       this.bagColliders.push(collider);
+    }
+    this.syncPlanks();
+  }
+
+  /** Fixed board. Same bounce as the bowl. */
+  private syncPlanks(): void {
+    for (const collider of this.plankColliders) {
+      this.bagHandles.delete(collider.handle);
+      this.world.removeCollider(collider, true);
+    }
+    this.plankColliders = [];
+    for (const plank of PLANKS) {
+      const parts = plank.vertical
+        ? [
+            RAPIER.ColliderDesc.cuboid(plank.halfW, plank.halfH).setTranslation(plank.x, plank.y),
+            RAPIER.ColliderDesc.ball(plank.halfW).setTranslation(plank.x, plank.y + plank.halfH),
+            RAPIER.ColliderDesc.ball(plank.halfW).setTranslation(plank.x, plank.y - plank.halfH),
+          ]
+        : [RAPIER.ColliderDesc.cuboid(plank.halfW, plank.halfH).setTranslation(plank.x, plank.y)];
+      for (const desc of parts) {
+        applyFixture(desc, plankMaterial());
+        const collider = this.world.createCollider(desc);
+        collider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+        this.bagHandles.add(collider.handle);
+        this.plankColliders.push(collider);
+      }
     }
   }
 
@@ -255,6 +284,7 @@ export class Sim {
     this.stock = LEVEL_BALLS;
     this.issued = 0;
     this.issuedColors = [];
+    this.settledColors = [];
     this.accumulator = 0;
     this.active = null;
     this.knocks.clear();
@@ -288,19 +318,16 @@ export class Sim {
    * Set once every ball has left play: parked in the U, or gone below the view.
    * `inBag` is how many of those balls are still inside the U.
    */
-  result(): { inBag: number; matched: number } | null {
-    if (this.stock > 0) return null;
+  result(): { passed: boolean } | null {
     if (this.shots.some((shot) => shot.phase !== 'gone' || shot.refill >= 0)) return null;
-    let inBag = 0;
-    let matched = 0;
-    for (const ball of this.parked) {
+    if (LEVEL_ID === 2) {
+      if ((['blue', 'gold'] as const).some((color) => this.canRefresh(color))) return null;
+    } else if (this.stock > 0) return null;
+    const passed = BAGS.every((_, index) => this.parked.some((ball) => {
       const p = ball.bird.translation();
-      const index = BAGS.findIndex((_, i) => ballInBag(p.x, p.y, i));
-      if (index < 0) continue;
-      inBag += 1;
-      if (!COLOR_SCORE || BAG_SPEC[index].color === ball.color) matched += 1;
-    }
-    return { inBag, matched };
+      return ball.color === BAG_SPEC[index]?.color && ballInBag(p.x, p.y, index);
+    }));
+    return { passed };
   }
 
   static async create(): Promise<Sim> {
@@ -600,8 +627,7 @@ export class Sim {
 
   /**
    * A caught ball sits on the band that caught it. The bands do not swap.
-   * The ball's own band, now empty, refills its own color. The catching band
-   * waits until this ball leaves, then refills its own color.
+   * The ball's own band stays empty. That color does not refill while this ball is alive.
    */
   private settleCatch(shot: Shot): number {
     const self = this.shots.indexOf(shot);
@@ -621,8 +647,7 @@ export class Sim {
     host.collider = collider;
     host.color = color;
     host.band.holdAtRest();
-    const wait = this.remaining(shot.color) > 0 ? REFILL_DELAY : -1;
-    this.armEmpty(shot, wait);
+    this.armEmpty(shot, -1);
     this.restOnPouch(host);
     return hostIndex;
   }
@@ -753,6 +778,7 @@ export class Sim {
     });
     const flying = this.shots.find((shot) => shot.phase === 'flying');
     this.camera.step(flying ? flying.bird.translation().y : null, STEP);
+    this.pumpRefill();
     for (const shot of this.shots) {
       this.afterFly(shot);
     }
@@ -760,8 +786,11 @@ export class Sim {
 
   /** The ball fell through the bottom of the current view. The next one waits the same delay. */
   private die(shot: Shot): void {
+    const color = shot.color;
     shot.phase = 'gone';
-    shot.refill = this.remaining(this.colorFor(shot)) > 0 ? REFILL_DELAY : -1;
+    shot.refill = -1;
+    if (LEVEL_ID === 2) this.settledColors.push(color);
+    else if (this.remaining(this.colorFor(shot)) > 0) shot.refill = REFILL_DELAY;
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setGravityScale(0, true);
@@ -782,10 +811,40 @@ export class Sim {
     else if (shot.phase === 'gone') this.issue(shot);
   }
 
-  /** The flying ball has rested inside the U. It stays. The pipe may issue another. */
+  /** The flying ball has rested inside the U. It stays. Level 2 may then refill that color. */
   private arrive(shot: Shot): void {
     this.parked.push({ bird: shot.bird, collider: shot.collider, color: shot.color });
-    if (!this.issue(shot)) shot.phase = 'gone';
+    shot.phase = 'gone';
+    shot.refill = -1;
+    if (LEVEL_ID === 2) this.settledColors.push(shot.color);
+    else this.issue(shot);
+  }
+
+  /** Level 2: the next ball of a color waits until the previous one has died or landed in a bowl. */
+  private alive(color: BallColor): number {
+    const used = this.issuedColors.filter((item) => item === color).length;
+    const settled = this.settledColors.filter((item) => item === color).length;
+    return used - settled;
+  }
+
+  private canRefresh(color: BallColor): boolean {
+    return this.remaining(color) > 0 && (LEVEL_ID !== 2 || this.alive(color) === 0);
+  }
+
+  private homeShot(color: BallColor): Shot {
+    if (LEVEL_ID !== 2 || color === 'gold') return this.shots[this.shots.length - 1];
+    return this.shots[0];
+  }
+
+  private pumpRefill(): void {
+    if (LEVEL_ID !== 2) return;
+    for (const color of ['blue', 'gold'] as const) {
+      if (!this.canRefresh(color)) continue;
+      const home = this.homeShot(color);
+      const index = this.shots.indexOf(home);
+      if (home.phase !== 'gone' || home.refill >= 0 || this.bandHeld(index)) continue;
+      home.refill = REFILL_DELAY;
+    }
   }
 
   /** Level 2: the left band only drops blue, the right band only drops gold. */
@@ -803,7 +862,7 @@ export class Sim {
   /** Drop the next ball of this band's color from the marked point. Gravity carries it onto the band. */
   private issue(shot: Shot): boolean {
     const color = this.colorFor(shot);
-    if (this.remaining(color) <= 0) return false;
+    if (!this.canRefresh(color)) return false;
     this.stock -= 1;
     this.issuedColors.push(color);
     shot.color = color;
@@ -853,6 +912,10 @@ export class Sim {
       return;
     }
     if (this.sealedInBowl(p.x, p.y)) {
+      if (LEVEL_ID === 2) {
+        this.arrive(shot);
+        return;
+      }
       if (shot.refill < 0) {
         if (this.stock <= 0) this.arrive(shot);
         else shot.refill = REFILL_DELAY;

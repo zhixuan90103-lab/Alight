@@ -8,6 +8,7 @@ import {
   BALL_HEX,
   bandWidth,
   BIRD_R,
+  PLANKS,
   SHOW_BAG,
   SLINGS,
   type BallColor,
@@ -470,6 +471,21 @@ export function createPlayView(scene: THREE.Scene): {
     bandEnds.push(end);
     scene.add(end);
   }
+  const plankRibbon = {
+    mesh: new THREE.Mesh(meshGeom(RIBBON_VERTS, RIBBON_INDICES), bowlMat),
+    shadow: mountShadow(meshGeom(SHADOW_VERTS, SHADOW_INDICES)),
+  };
+  plankRibbon.mesh.frustumCulled = false;
+  plankRibbon.mesh.renderOrder = 3;
+  scene.add(plankRibbon.mesh);
+  const plankCaps = [0, 1].map(() => {
+    const cap = circle(1, GOLD, 64);
+    cap.material = bowlMat;
+    cap.renderOrder = 3;
+    scene.add(cap);
+    return cap;
+  });
+
   const rivetR = STROKE * 0.34;
   const rivets: THREE.Mesh[] = [];
   for (let n = 0; n < BAND_SLOTS; n++) {
@@ -515,6 +531,41 @@ export function createPlayView(scene: THREE.Scene): {
     sync(sim: Sim, dt: number) {
       const s = sim.sample();
       hum += dt;
+      const board = PLANKS[0];
+      const showBoard = Boolean(board?.vertical);
+      plankRibbon.mesh.visible = showBoard;
+      plankRibbon.shadow.group.visible = showBoard;
+      for (const cap of plankCaps) cap.visible = showBoard;
+      if (board?.vertical) {
+        const pts = [
+          { x: board.x, y: board.y + board.halfH },
+          { x: board.x, y: board.y - board.halfH },
+        ];
+        const width = board.halfW * 2;
+        const geom = plankRibbon.mesh.geometry;
+        const attr = geom.getAttribute('position') as THREE.BufferAttribute;
+        const index = geom.getIndex() as THREE.BufferAttribute;
+        const count = writeRibbon(attr.array as Float32Array, index.array as Uint32Array, pts, width);
+        geom.setDrawRange(0, count);
+        attr.needsUpdate = true;
+        index.needsUpdate = true;
+        const shadowGeom = plankRibbon.shadow.mesh.geometry;
+        const shadowAttr = shadowGeom.getAttribute('position') as THREE.BufferAttribute;
+        const shadowIndex = shadowGeom.getIndex() as THREE.BufferAttribute;
+        const shadowCount = writeStrokeShadow(
+          shadowAttr.array as Float32Array,
+          shadowIndex.array as Uint32Array,
+          pts,
+          width,
+        );
+        shadowGeom.setDrawRange(0, shadowCount);
+        shadowAttr.needsUpdate = true;
+        shadowIndex.needsUpdate = true;
+        for (let i = 0; i < 2; i++) {
+          plankCaps[i].position.set(pts[i].x, pts[i].y, 0.55);
+          plankCaps[i].scale.set(board.halfW, board.halfW, 1);
+        }
+      }
       for (let i = 0; i < bagRibbons.length; i++) {
         const bagState = s.bags[i];
         const here = Boolean(bagState) && SHOW_BAG && !bagState.gone;
