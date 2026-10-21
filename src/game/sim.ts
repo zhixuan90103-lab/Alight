@@ -1,8 +1,9 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { aboveOpenMouth, bagMouth, bagSeat, clearCloth, mouthEntry, resolveBowl, type Cloth } from './bag';
+import { bagOuterPoints, ballInBag, clearCloth, type Cloth } from './bag';
 import { Band } from './band';
 import {
   BAGS,
+  BAG_RESTITUTION,
   BAND_ZETA,
   BIRD_R,
   DEAD_PULL,
@@ -98,8 +99,8 @@ const ANIMATION: ReadonlySet<Phase> = new Set(['launching', 'flying', 'catching'
 export class Sim {
   readonly world: RAPIER.World;
   private groundCollider: RAPIER.Collider;
+  private bagColliders: RAPIER.Collider[] = [];
   private readonly shots: Shot[];
-  private readonly sealed: boolean[];
   private readonly gone: boolean[];
   hearts = 3;
   private accumulator = 0;
@@ -114,7 +115,7 @@ export class Sim {
     const ground = RAPIER.ColliderDesc.cuboid(240, 16).setTranslation(195, GROUND_Y - 16);
     ground.setRestitution(0.05);
     this.groundCollider = this.world.createCollider(ground);
-    this.sealed = BAGS.map(() => false);
+    this.syncBags();
     this.gone = BAGS.map(() => false);
     this.shots = SLINGS.map((sling) => this.makeShot(sling));
   }
@@ -161,6 +162,26 @@ export class Sim {
       shot.collider.setRadius(BIRD_R);
     }
     this.groundCollider.setTranslation({ x: 195, y: GROUND_Y - 16 });
+    this.syncBags();
+  }
+
+  /** Open U as a static polyline. Only its restitution is special. */
+  private syncBags(): void {
+    for (const collider of this.bagColliders) this.world.removeCollider(collider, true);
+    this.bagColliders = [];
+    if (!SHOW_BAG) return;
+    for (const at of BAGS) {
+      const pts = bagOuterPoints(at);
+      const vertices = new Float32Array(pts.length * 2);
+      for (let i = 0; i < pts.length; i++) {
+        vertices[i * 2] = pts[i].x;
+        vertices[i * 2 + 1] = pts[i].y;
+      }
+      const desc = RAPIER.ColliderDesc.polyline(vertices)
+        .setRestitution(BAG_RESTITUTION)
+        .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max);
+      this.bagColliders.push(this.world.createCollider(desc));
+    }
   }
 
   static async create(): Promise<Sim> {
@@ -177,7 +198,11 @@ export class Sim {
 
   sample(): SimSample {
     const bags: BagSample[] = BAGS.map((_, i) => ({
-      sealed: this.shots.some((shot) => shot.bag === i && (shot.phase === 'settling' || shot.phase === 'asleep')),
+      sealed: this.shots.some((shot) => {
+        if (shot.phase === 'ready' || shot.phase === 'pulling' || shot.phase === 'launching' || shot.phase === 'gone') return false;
+        const p = shot.bird.translation();
+        return ballInBag(p.x, p.y, BAGS[i]);
+      }),
       gone: this.gone[i],
       give: 0,
       pressX: 0,
@@ -415,66 +440,6 @@ export class Sim {
     this.feel.push('catch');
   }
 
-  private stepBag(shot: Shot): void {
-    const at = BAGS[shot.bag];
-    const p = shot.bird.translation();
-    const v = shot.bird.linvel();
-    const moved = resolveBowl(p.x, p.y, v.x, v.y, true, at);
-    shot.bird.setTranslation({ x: moved.x, y: moved.y }, true);
-    shot.bird.setLinvel({ x: moved.vx, y: moved.vy }, true);
-    const mouth = bagMouth(at);
-    const left = moved.x < mouth.x - BIRD_R * 2 || moved.x > mouth.x + BIRD_R * 2;
-    const seat = bagSeat(at);
-    const escaped = moved.y > mouth.y + BIRD_R || moved.y < seat.y - BIRD_R || left;
-    if (!moved.hit && escaped) {
-      this.sealed[shot.bag] = false;
-      shot.bag = -1;
-      shot.phase = 'flying';
-      return;
-    }
-    if (Math.hypot(moved.x - seat.x, moved.y - seat.y) > 2 || Math.hypot(moved.vx, moved.vy) > 36) return;
-    shot.bird.setLinvel({ x: 0, y: 0 }, true);
-    shot.bird.setTranslation({ x: seat.x, y: seat.y }, true);
-    shot.bird.setBodyType(RAPIER.RigidBodyType.Fixed, true);
-    shot.collider.setEnabled(false);
-    shot.phase = 'asleep';
-    this.feel.push('asleep');
-  }
-
-  private beginBag(shot: Shot, bag: number): void {
-    shot.bag = bag;
-    shot.cloth = clearCloth();
-    this.sealed[bag] = true;
-    shot.phase = 'settling';
-  }
-
-  /** Keep the incoming speed and run the rest of this step against the hard bowl. */
-  private landInBowl(shot: Shot, bag: number, x: number, y: number, endX: number, endY: number): void {
-    const v = shot.bird.linvel();
-    let px = x;
-    let py = y - 1;
-    let vx = v.x;
-    let vy = v.y;
-    const at = BAGS[bag];
-    const span = Math.hypot(endX - px, endY - py);
-    const speed = Math.max(1, Math.hypot(vx, vy));
-    let time = span / speed;
-    while (time > 1e-4) {
-      const step = Math.min(time, 4 / speed);
-      const moved = resolveBowl(px + vx * step, py + vy * step, vx, vy, true, at);
-      px = moved.x;
-      py = moved.y;
-      vx = moved.vx;
-      vy = moved.vy;
-      if (moved.impact > 90) this.feel.push('knock');
-      time -= step;
-    }
-    shot.bird.setTranslation({ x: px, y: py }, true);
-    shot.bird.setLinvel({ x: vx, y: vy }, true);
-    shot.prevX = px;
-    shot.prevY = py;
-  }
-
   private stepCatch(shot: Shot): void {
     const pouch = this.shots[shot.catchOn].sling.pouch;
     const p = shot.bird.translation();
@@ -632,8 +597,7 @@ export class Sim {
     }
     this.world.step();
     for (const shot of this.shots) {
-      if (shot.phase === 'settling') this.stepBag(shot);
-      else this.afterFly(shot);
+      this.afterFly(shot);
     }
   }
 
@@ -652,53 +616,9 @@ export class Sim {
     shot.prevX = p.x;
     shot.prevY = p.y;
     if (this.catchArrival(shot, fromX, fromY, p.x, p.y)) return;
-    if (SHOW_BAG && this.meetBag(shot, fromX, fromY, p.x, p.y)) return;
     const hitGround = p.y - BIRD_R <= GROUND_Y + 2 && v.y <= 0;
     const out = p.x < -40 || p.x > 430 || p.y > 900;
     if (hitGround || out) this.miss(shot);
-  }
-
-  /**
-   * Same plane as the ball. Open bags are checked left to right.
-   * The first center to cross a mouth seals that bag.
-   */
-  private meetBag(shot: Shot, x0: number, y0: number, x1: number, y1: number): boolean {
-    const travel = Math.hypot(x1 - x0, y1 - y0);
-    const steps = Math.max(1, Math.ceil(travel / 4));
-    let ax = x0;
-    let ay = y0;
-    const v = shot.bird.linvel();
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      const bx = x0 + (x1 - x0) * t;
-      const by = y0 + (y1 - y0) * t;
-      for (let bag = 0; bag < BAGS.length; bag++) {
-        if (this.gone[bag]) continue;
-        const at = BAGS[bag];
-        const entry = this.sealed[bag] ? null : mouthEntry(ax, ay, bx, by, at);
-        if (entry) {
-          this.beginBag(shot, bag);
-          this.landInBowl(shot, bag, entry.x, entry.y, x1, y1);
-          return true;
-        }
-      }
-      for (let bag = 0; bag < BAGS.length; bag++) {
-        if (this.gone[bag]) continue;
-        const at = BAGS[bag];
-        if (!this.sealed[bag] && aboveOpenMouth(bx, by, at)) continue;
-        const moved = resolveBowl(bx, by, v.x, v.y, this.sealed[bag], at);
-        if (!moved.hit) continue;
-        shot.bird.setTranslation({ x: moved.x, y: moved.y }, true);
-        shot.bird.setLinvel({ x: moved.vx, y: moved.vy }, true);
-        shot.prevX = moved.x;
-        shot.prevY = moved.y;
-        if (moved.impact > 90) this.feel.push('knock');
-        return true;
-      }
-      ax = bx;
-      ay = by;
-    }
-    return false;
   }
 
   private miss(shot: Shot): void {

@@ -73,40 +73,6 @@ export function bagStrokePoints(at: { x: number; y: number } = BAG_AT): Array<{ 
   return bowl(at, bagStroke() / 2);
 }
 
-export function aboveOpenMouth(x: number, y: number, at: { x: number; y: number } = BAG_AT): boolean {
-  const pts = bagOuterPoints(at);
-  const left = pts[0];
-  const right = pts[pts.length - 1];
-  return y >= left.y && x > left.x && x < right.x;
-}
-
-/** Where the center crosses the lip, or null if it does not enter. */
-export function mouthEntry(
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-  at: { x: number; y: number } = BAG_AT,
-): { x: number; y: number } | null {
-  const pts = bagOuterPoints(at);
-  const left = pts[0];
-  const right = pts[pts.length - 1];
-  const mouthY = left.y;
-  if (y0 < mouthY || y1 > mouthY) return null;
-  const dy = y1 - y0;
-  if (dy === 0) return null;
-  const t = (mouthY - y0) / dy;
-  if (t < 0 || t > 1) return null;
-  const x = x0 + (x1 - x0) * t;
-  if (x <= left.x + 2 || x >= right.x - 2) return null;
-  return { x, y: mouthY };
-}
-
-/** Center fell across the opening. The side walls stay solid. */
-export function enteredMouth(x0: number, y0: number, x1: number, y1: number, at: { x: number; y: number } = BAG_AT): boolean {
-  return mouthEntry(x0, y0, x1, y1, at) !== null;
-}
-
 function pointInBag(px: number, py: number, pts: ReadonlyArray<{ x: number; y: number }>): boolean {
   let crossings = 0;
   for (let i = 0; i < pts.length; i++) {
@@ -119,73 +85,7 @@ function pointInBag(px: number, py: number, pts: ReadonlyArray<{ x: number; y: n
   return crossings % 2 === 1;
 }
 
-/** Hard bowl. Outside hits bounce a little. Inside, the ball slides and stays in the cup. */
-export function resolveBowl(
-  x: number,
-  y: number,
-  vx: number,
-  vy: number,
-  sealed: boolean,
-  at: { x: number; y: number } = BAG_AT,
-): { x: number; y: number; vx: number; vy: number; hit: boolean; impact: number } {
-  const pts = bagOuterPoints(at);
-  const inside = pointInBag(x, y, pts);
-  const edges = sealed ? pts.length : pts.length - 1;
-  let best: { dist: number; nx: number; ny: number } | null = null;
-  let areaX = 0;
-  let areaY = 0;
-  for (const p of pts) {
-    areaX += p.x;
-    areaY += p.y;
-  }
-  areaX /= pts.length;
-  areaY /= pts.length;
-  for (let i = 0; i < edges; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % pts.length];
-    const evx = b.x - a.x;
-    const evy = b.y - a.y;
-    const l2 = evx * evx + evy * evy || 1e-8;
-    let t = ((x - a.x) * evx + (y - a.y) * evy) / l2;
-    t = Math.max(0, Math.min(1, t));
-    const cx = a.x + evx * t;
-    const cy = a.y + evy * t;
-    const dist = Math.hypot(x - cx, y - cy);
-    const nlen = Math.hypot(evy, -evx) || 1;
-    let nx = evy / nlen;
-    let ny = -evx / nlen;
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    if ((areaX - mx) * nx + (areaY - my) * ny > 0) {
-      nx = -nx;
-      ny = -ny;
-    }
-    if (!best || dist < best.dist) best = { dist, nx, ny };
-  }
-  if (!best || best.dist >= BIRD_R) return { x, y, vx, vy, hit: false, impact: 0 };
-  const pen = BIRD_R - best.dist;
-  const nx = best.nx;
-  const ny = best.ny;
-  const vn = vx * nx + vy * ny;
-  if (inside) {
-    x -= nx * pen;
-    y -= ny * pen;
-    if (vn > 0) {
-      vx -= nx * vn * 1.4;
-      vy -= ny * vn * 1.4;
-    }
-    const vn2 = vx * nx + vy * ny;
-    const tx = vx - vn2 * nx;
-    const ty = vy - vn2 * ny;
-    vx = vn2 * nx + tx * 0.96;
-    vy = vn2 * ny + ty * 0.96;
-    return { x, y, vx, vy, hit: true, impact: Math.max(0, vn) };
-  }
-  x += nx * pen;
-  y += ny * pen;
-  if (vn < 0) {
-    vx -= nx * vn * 1.22;
-    vy -= ny * vn * 1.22;
-  }
-  return { x, y, vx, vy, hit: true, impact: Math.max(0, -vn) };
+/** Ball center is inside the open U. The mouth is the closing edge of the outline. */
+export function ballInBag(x: number, y: number, at: { x: number; y: number } = BAG_AT): boolean {
+  return pointInBag(x, y, bagOuterPoints(at));
 }

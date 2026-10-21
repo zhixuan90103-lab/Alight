@@ -19,7 +19,8 @@ export let STIFFNESS = 150;
 export let ROPE_MASS = MASS / 9;
 export let BAND_ZETA = 0.3;
 /** Bag settle damping. Higher than the band so the ball sinks in and stops. */
-export let BAG_ZETA = 0.6;
+/** Bowl collider restitution. Other contacts keep the body's own value. */
+export let BAG_RESTITUTION = 0.5;
 /** How far the cloth can give when a ball hits the outside, in pixels. */
 export const BAG_GIVE = 22;
 export let DEAD_PULL = 28;
@@ -107,7 +108,7 @@ export type TunePatch = {
   mass?: number;
   stiffness?: number;
   zeta?: number;
-  bagZeta?: number;
+  bagRestitution?: number;
   deadPull?: number;
   birdR?: number;
   ropeThickness?: number;
@@ -129,7 +130,7 @@ export function writeTune(patch: TunePatch): void {
   if (patch.mass !== undefined) MASS = patch.mass;
   if (patch.stiffness !== undefined) STIFFNESS = patch.stiffness;
   if (patch.zeta !== undefined) BAND_ZETA = patch.zeta;
-  if (patch.bagZeta !== undefined) BAG_ZETA = patch.bagZeta;
+  if (patch.bagRestitution !== undefined) BAG_RESTITUTION = patch.bagRestitution;
   if (patch.deadPull !== undefined) DEAD_PULL = patch.deadPull;
   if (patch.birdR !== undefined) BIRD_R = patch.birdR;
   if (patch.ropeThickness !== undefined) ROPE_THICKNESS = patch.ropeThickness;

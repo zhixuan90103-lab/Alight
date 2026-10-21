@@ -1,6 +1,6 @@
 import type { Sim } from './sim';
 import {
-  BAG_ZETA,
+  BAG_RESTITUTION,
   BAND_PULL_THIN,
   BAND_ZETA,
   BIRD_R,
@@ -30,7 +30,7 @@ const ROWS: Row[] = [
   { key: 'mass', label: '质量', min: 0.3, max: 2, step: 0.05, value: MASS },
   { key: 'stiffness', label: '劲度', min: 10, max: 160, step: 1, value: STIFFNESS },
   { key: 'zeta', label: '阻尼', min: 0.05, max: 1.2, step: 0.05, value: BAND_ZETA },
-  { key: 'bagZeta', label: '口袋阻尼', min: 0.05, max: 2.5, step: 0.05, value: BAG_ZETA },
+  { key: 'bagRestitution', label: '口袋弹性', min: 0, max: 1, step: 0.05, value: BAG_RESTITUTION },
   { key: 'maxPull', label: '最大拉动', min: 40, max: 240, step: 1, value: MAX_PULL },
   { key: 'slipLift', label: '向上脱手', min: 0, max: 80, step: 1, value: SLIP_LIFT },
   { key: 'deadPull', label: '死区', min: 0, max: 80, step: 1, value: DEAD_PULL },
