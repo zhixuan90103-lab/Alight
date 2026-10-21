@@ -424,14 +424,14 @@ export class Sim {
     shot.bird.setLinvel({ x: moved.vx, y: moved.vy }, true);
     const mouth = bagMouth(at);
     const left = moved.x < mouth.x - BIRD_R * 2 || moved.x > mouth.x + BIRD_R * 2;
-    const escaped = moved.y > mouth.y + BIRD_R || moved.y < mouth.y - BIRD_R * 4 || left;
+    const seat = bagSeat(at);
+    const escaped = moved.y > mouth.y + BIRD_R || moved.y < seat.y - BIRD_R || left;
     if (!moved.hit && escaped) {
       this.sealed[shot.bag] = false;
       shot.bag = -1;
       shot.phase = 'flying';
       return;
     }
-    const seat = bagSeat(at);
     if (Math.hypot(moved.x - seat.x, moved.y - seat.y) > 2 || Math.hypot(moved.vx, moved.vy) > 36) return;
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setTranslation({ x: seat.x, y: seat.y }, true);

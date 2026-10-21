@@ -1,10 +1,9 @@
 import * as THREE from 'three';
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 
-import { bagStroke, bagStrokePoints } from './bag';
+import { bagStrokePoints } from './bag';
 import {
   BAGS,
-  bandWidth,
   BIRD_R,
   SHOW_BAG,
   SLINGS,
@@ -19,10 +18,21 @@ function circle(radius: number, color: number, segments = 40): THREE.Mesh {
   return mesh;
 }
 
-/** Warm paper, ink mechanisms, one accent. Matches the flat black-prop reference. */
-const PAPER = 0xeae8e5;
-const INK = 0x1a1c22;
-const ACCENT = 0xff7a1a;
+/** Flat blue field, cyan mechanisms, gold balls, one long shadow down-right. */
+const FIELD = 0x4777cc;
+const CYAN = 0x79d0ff;
+const BAND = 0xffffff;
+const RIVET = 0x111111;
+const GOLD = 0xfaca50;
+const SHADOW = 0x3862ae;
+/** Shadow runs down-right. The soft ring is 10% of that length. */
+const SHADOW_X = 14;
+const SHADOW_Y = -14;
+const SHADOW_BLUR = Math.hypot(SHADOW_X, SHADOW_Y) * 0.1;
+/** Bands and balls cast a shorter shadow than the bowls. */
+const NEAR_CAST = 0.6;
+/** One even stroke. The tune thickness stays on the rope, not on this picture. */
+const STROKE = 8;
 
 /** At full draw the ball and the band hum along the pull. Anchors stay put, so the contact does not open a gap. */
 function humAlongForce(
@@ -46,6 +56,9 @@ function humAlongForce(
 
 const RIBBON_VERTS = 640;
 const RIBBON_INDICES = 2400;
+const SHADOW_VERTS = 4096;
+const SHADOW_INDICES = 12000;
+const CAP_STEPS = 12;
 
 /**
  * Round strap. Each bend is a fan of radius half the width.
@@ -154,6 +167,167 @@ function writeRibbon(
   return c;
 }
 
+function meshGeom(vertCount: number, indexCount: number): THREE.BufferGeometry {
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
+  geom.setIndex(new THREE.BufferAttribute(new Uint32Array(indexCount), 1));
+  geom.setDrawRange(0, 0);
+  return geom;
+}
+
+/** Solid face swept from a disc along the shadow vector. The cyan shape covers the start. */
+function writeDiscSweep(
+  positions: Float32Array,
+  indices: Uint32Array,
+  cx: number,
+  cy: number,
+  radius: number,
+  z: number,
+  cursor: { v: number; c: number },
+  cast = 1,
+): void {
+  const room = SHADOW_VERTS - cursor.v;
+  const iroom = SHADOW_INDICES - cursor.c;
+  if (room < CAP_STEPS * 2 + 4 || iroom < CAP_STEPS * 6 + 6) return;
+  const ox = SHADOW_X * cast;
+  const oy = SHADOW_Y * cast;
+  const mag = Math.hypot(ox, oy) || 1;
+  const px = (-oy / mag) * radius;
+  const py = (ox / mag) * radius;
+  const add = (x: number, y: number) => {
+    const i = cursor.v++;
+    const o = i * 3;
+    positions[o] = x;
+    positions[o + 1] = y;
+    positions[o + 2] = z;
+    return i;
+  };
+  const fan = (x: number, y: number) => {
+    const center = add(x, y);
+    let prev = add(x + radius, y);
+    for (let k = 1; k <= CAP_STEPS; k++) {
+      const ang = (Math.PI * 2 * k) / CAP_STEPS;
+      const rim = add(x + Math.cos(ang) * radius, y + Math.sin(ang) * radius);
+      indices[cursor.c++] = center;
+      indices[cursor.c++] = prev;
+      indices[cursor.c++] = rim;
+      prev = rim;
+    }
+  };
+  fan(cx, cy);
+  fan(cx + ox, cy + oy);
+  const a = add(cx + px, cy + py);
+  const b = add(cx - px, cy - py);
+  const c = add(cx + ox - px, cy + oy - py);
+  const d = add(cx + ox + px, cy + oy + py);
+  indices[cursor.c++] = a;
+  indices[cursor.c++] = b;
+  indices[cursor.c++] = d;
+  indices[cursor.c++] = b;
+  indices[cursor.c++] = c;
+  indices[cursor.c++] = d;
+}
+
+/**
+ * Long shadow of an open stroke: each disc and each straight segment is swept into a flat face.
+ * Overlaps stay the same color, so the visible part is the slab sticking down-right.
+ */
+function writeStrokeShadow(
+  positions: Float32Array,
+  indices: Uint32Array,
+  points: ReadonlyArray<{ x: number; y: number }>,
+  width: number,
+  cast = 1,
+): number {
+  const cursor = { v: 0, c: 0 };
+  const raw: Array<{ x: number; y: number }> = [];
+  for (const p of points) {
+    const last = raw[raw.length - 1];
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.35) continue;
+    raw.push(p);
+  }
+  if (raw.length === 0) return 0;
+  const radius = width / 2;
+  const z = 0.2;
+  for (const p of raw) writeDiscSweep(positions, indices, p.x, p.y, radius, z, cursor, cast);
+
+  const add = (x: number, y: number) => {
+    if (cursor.v >= SHADOW_VERTS) return -1;
+    const i = cursor.v++;
+    const o = i * 3;
+    positions[o] = x;
+    positions[o + 1] = y;
+    positions[o + 2] = z;
+    return i;
+  };
+  for (let i = 0; i < raw.length - 1; i++) {
+    if (cursor.c + 18 >= SHADOW_INDICES || cursor.v + 8 >= SHADOW_VERTS) break;
+    const a = raw[i];
+    const b = raw[i + 1];
+    let tx = b.x - a.x;
+    let ty = b.y - a.y;
+    const mag = Math.hypot(tx, ty) || 1;
+    tx /= mag;
+    ty /= mag;
+    const lx = -ty * radius;
+    const ly = tx * radius;
+    const corners = [
+      { x: a.x + lx, y: a.y + ly },
+      { x: a.x - lx, y: a.y - ly },
+      { x: b.x + lx, y: b.y + ly },
+      { x: b.x - lx, y: b.y - ly },
+    ];
+    const swept = corners.flatMap((p) => [p, { x: p.x + SHADOW_X * cast, y: p.y + SHADOW_Y * cast }]);
+    swept.sort((p, q) => p.x - q.x || p.y - q.y);
+    const cross = (
+      o: { x: number; y: number },
+      u: { x: number; y: number },
+      w: { x: number; y: number },
+    ) => (u.x - o.x) * (w.y - o.y) - (u.y - o.y) * (w.x - o.x);
+    const lower: Array<{ x: number; y: number }> = [];
+    for (const p of swept) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+      lower.push(p);
+    }
+    const upper: Array<{ x: number; y: number }> = [];
+    for (let k = swept.length - 1; k >= 0; k--) {
+      const p = swept[k];
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+      upper.push(p);
+    }
+    lower.pop();
+    upper.pop();
+    const ring = lower.concat(upper);
+    if (ring.length < 3) continue;
+    let cx = 0;
+    let cy = 0;
+    for (const p of ring) {
+      cx += p.x;
+      cy += p.y;
+    }
+    cx /= ring.length;
+    cy /= ring.length;
+    const center = add(cx, cy);
+    if (center < 0) break;
+    let prev = add(ring[0].x, ring[0].y);
+    for (let k = 1; k < ring.length; k++) {
+      const rim = add(ring[k].x, ring[k].y);
+      if (prev < 0 || rim < 0) break;
+      indices[cursor.c++] = center;
+      indices[cursor.c++] = prev;
+      indices[cursor.c++] = rim;
+      prev = rim;
+    }
+    const close = add(ring[0].x, ring[0].y);
+    if (prev >= 0 && close >= 0) {
+      indices[cursor.c++] = center;
+      indices[cursor.c++] = prev;
+      indices[cursor.c++] = close;
+    }
+  }
+  return cursor.c;
+}
+
 /**
  * World +x is design +x, world +y is up.
  * Camera sits on +z looking toward -z, so screen-right is world +x and screen-up is world +y.
@@ -162,7 +336,7 @@ export function createPlayView(scene: THREE.Scene): {
   camera: THREE.OrthographicCamera;
   sync: (sim: Sim, dt: number) => void;
 } {
-  scene.background = new THREE.Color(PAPER);
+  scene.background = new THREE.Color(FIELD);
 
   const camera = new THREE.OrthographicCamera(
     -DESIGN_WIDTH / 2,
@@ -176,61 +350,127 @@ export function createPlayView(scene: THREE.Scene): {
   camera.lookAt(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2, 0);
   camera.up.set(0, 1, 0);
 
+  const shadowMat = new THREE.MeshBasicMaterial({
+    color: SHADOW,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 1,
+    depthWrite: true,
+  });
+  const softShadowMat = new THREE.MeshBasicMaterial({
+    color: SHADOW,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false,
+  });
+  const cyanMat = new THREE.MeshBasicMaterial({
+    color: CYAN,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 1,
+    depthWrite: true,
+  });
+  const bandMat = new THREE.MeshBasicMaterial({
+    color: BAND,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 1,
+    depthWrite: true,
+  });
+  const rivetMat = new THREE.MeshBasicMaterial({
+    color: RIVET,
+    transparent: true,
+    opacity: 1,
+    depthWrite: true,
+  });
+  const goldMat = new THREE.MeshBasicMaterial({
+    color: GOLD,
+    transparent: true,
+    opacity: 1,
+    depthWrite: true,
+  });
+  const mountShadow = (geom: THREE.BufferGeometry, cast = 1) => {
+    const group = new THREE.Group();
+    const len = Math.hypot(SHADOW_X, SHADOW_Y) || 1;
+    const dx = SHADOW_X / len;
+    const dy = SHADOW_Y / len;
+    const steps = 4;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const mat = softShadowMat.clone();
+      mat.opacity = 0.5 * (1 - t);
+      const soft = new THREE.Mesh(geom, mat);
+      soft.frustumCulled = false;
+      soft.renderOrder = i;
+      soft.position.set(dx * SHADOW_BLUR * cast * t, dy * SHADOW_BLUR * cast * t, 0);
+      group.add(soft);
+    }
+    const mesh = new THREE.Mesh(geom, shadowMat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = steps + 1;
+    group.add(mesh);
+    scene.add(group);
+    return { mesh, group };
+  };
+
   const bagRibbons = BAGS.map(() => {
-    const positions = new Float32Array(RIBBON_VERTS * 3);
-    const indices = new Uint32Array(RIBBON_INDICES);
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geom.setIndex(new THREE.BufferAttribute(indices, 1));
-    geom.setDrawRange(0, 0);
-    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: ACCENT, side: THREE.DoubleSide }));
+    const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
+    const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
+    const shadow = mountShadow(shadowGeom);
+    const mesh = new THREE.Mesh(geom, cyanMat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 3;
     scene.add(mesh);
-    return mesh;
+    return { mesh, shadow };
   });
   const bagEnds: THREE.Mesh[] = [];
-  const bagEndMat = new THREE.MeshBasicMaterial({ color: ACCENT });
-  const rivetMat = new THREE.MeshBasicMaterial({ color: INK });
-  const rivetHole = new THREE.MeshBasicMaterial({ color: PAPER });
-  const rivetHeads: THREE.Mesh[] = [];
-  const rivetHoles: THREE.Mesh[] = [];
-  for (const sling of SLINGS) {
-    for (const rivet of [sling.left, sling.right]) {
-      const head = circle(1, INK, 64);
-      head.material = rivetMat;
-      head.position.set(rivet.x, rivet.y, 0.7);
-      const hole = circle(1, PAPER, 64);
-      hole.material = rivetHole;
-      hole.position.set(rivet.x, rivet.y, 0.75);
-      rivetHeads.push(head);
-      rivetHoles.push(hole);
-      scene.add(head, hole);
-    }
-  }
   for (let i = 0; i < BAGS.length * 2; i++) {
-    const end = circle(1, ACCENT, 64);
-    end.material = bagEndMat;
+    const end = circle(1, CYAN, 64);
+    end.material = cyanMat;
+    end.renderOrder = 3;
     bagEnds.push(end);
     scene.add(end);
   }
 
   const arcs = SLINGS.map(() => {
-    const positions = new Float32Array(RIBBON_VERTS * 3);
-    const indices = new Uint32Array(RIBBON_INDICES);
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geom.setIndex(new THREE.BufferAttribute(indices, 1));
-    geom.setDrawRange(0, 0);
-    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: INK, side: THREE.DoubleSide }));
+    const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
+    const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
+    const shadow = mountShadow(shadowGeom, NEAR_CAST);
+    const mesh = new THREE.Mesh(geom, bandMat);
     mesh.frustumCulled = false;
-    mesh.renderOrder = 1;
+    mesh.renderOrder = 3;
     scene.add(mesh);
-    return mesh;
+    return { mesh, shadow };
   });
 
+  const bandEnds: THREE.Mesh[] = [];
+  for (let i = 0; i < SLINGS.length * 2; i++) {
+    const end = circle(1, BAND, 64);
+    end.material = bandMat;
+    end.renderOrder = 3;
+    bandEnds.push(end);
+    scene.add(end);
+  }
+  const rivetR = STROKE * 0.34;
+  for (const sling of SLINGS) {
+    for (const rivet of [sling.left, sling.right]) {
+      const head = circle(1, RIVET, 64);
+      head.material = rivetMat;
+      head.renderOrder = 4;
+      head.position.set(rivet.x, rivet.y, 0.8);
+      head.scale.set(rivetR, rivetR, 1);
+      scene.add(head);
+    }
+  }
+
+  const ballShadows = SLINGS.map(() => {
+    return mountShadow(meshGeom(64, 192), NEAR_CAST);
+  });
   const balls = SLINGS.map(() => {
-    const body = circle(1, ACCENT);
+    const body = circle(1, GOLD);
+    body.material = goldMat;
+    body.renderOrder = 4;
     const group = new THREE.Group();
     group.add(body);
     group.renderOrder = 2;
@@ -250,17 +490,30 @@ export function createPlayView(scene: THREE.Scene): {
         const giveX = bagState.pressX * bagState.give * 0.55;
         const giveY = bagState.pressY * bagState.give * 0.55;
         const pts = bagStrokePoints(BAGS[i]).map((p) => ({ x: p.x - giveX, y: p.y - giveY }));
-        const ribbon = bagRibbons[i];
+        const ribbon = bagRibbons[i].mesh;
+        const shadow = bagRibbons[i].shadow;
         ribbon.visible = here;
+        shadow.group.visible = here;
         const geom = ribbon.geometry;
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
         const index = geom.getIndex() as THREE.BufferAttribute;
-        const stroke = bagStroke();
-        const count = writeRibbon(attr.array as Float32Array, index.array as Uint32Array, pts, stroke);
+        const count = writeRibbon(attr.array as Float32Array, index.array as Uint32Array, pts, STROKE);
         geom.setDrawRange(0, count);
         attr.needsUpdate = true;
         index.needsUpdate = true;
-        const endR = stroke / 2;
+        const shadowGeom = shadow.mesh.geometry;
+        const shadowAttr = shadowGeom.getAttribute('position') as THREE.BufferAttribute;
+        const shadowIndex = shadowGeom.getIndex() as THREE.BufferAttribute;
+        const shadowCount = writeStrokeShadow(
+          shadowAttr.array as Float32Array,
+          shadowIndex.array as Uint32Array,
+          pts,
+          STROKE,
+        );
+        shadowGeom.setDrawRange(0, shadowCount);
+        shadowAttr.needsUpdate = true;
+        shadowIndex.needsUpdate = true;
+        const endR = STROKE / 2;
         const tips = [pts[0], pts[pts.length - 1]];
         for (let k = 0; k < 2; k++) {
           const end = bagEnds[i * 2 + k];
@@ -269,29 +522,60 @@ export function createPlayView(scene: THREE.Scene): {
           end.scale.set(endR, endR, 1);
         }
       }
-      const outer = (bandWidth(0) / 2) * 0.86;
-      const inner = outer * 0.78;
-      for (const head of rivetHeads) head.scale.set(outer, outer, 1);
-      for (const hole of rivetHoles) hole.scale.set(inner, inner, 1);
-
       for (let i = 0; i < s.shots.length; i++) {
         const shot = s.shots[i];
         const atMax = shot.phase === 'pulling' && shot.strain >= 0.995;
         const amp = atMax ? Math.sin(hum * 64) * 1.6 : 0;
         const ball = balls[i];
-        ball.position.set(shot.birdX + shot.aimX * amp, shot.birdY + shot.aimY * amp, 1);
-        ball.visible = shot.phase !== 'gone';
+        const ballShadow = ballShadows[i];
+        const bx = shot.birdX + shot.aimX * amp;
+        const by = shot.birdY + shot.aimY * amp;
+        const shown = shot.phase !== 'gone';
+        ball.position.set(bx, by, 1);
+        ball.visible = shown;
         ball.scale.set(BIRD_R, BIRD_R, 1);
+        ballShadow.group.visible = shown;
+        const ballGeom = ballShadow.mesh.geometry;
+        const ballAttr = ballGeom.getAttribute('position') as THREE.BufferAttribute;
+        const ballIndex = ballGeom.getIndex() as THREE.BufferAttribute;
+        const ballCursor = { v: 0, c: 0 };
+        if (shown) {
+          writeDiscSweep(ballAttr.array as Float32Array, ballIndex.array as Uint32Array, bx, by, BIRD_R, 0.2, ballCursor, NEAR_CAST);
+        }
+        ballGeom.setDrawRange(0, ballCursor.c);
+        ballAttr.needsUpdate = true;
+        ballIndex.needsUpdate = true;
         const points = amp === 0 ? shot.band : humAlongForce(shot.band, shot.birdX, shot.birdY, shot.aimX, shot.aimY, amp);
-        const geom = arcs[i].geometry;
+        const arc = arcs[i];
+        const geom = arc.mesh.geometry;
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
         const index = geom.getIndex() as THREE.BufferAttribute;
         const count = writeRibbon(
           attr.array as Float32Array,
           index.array as Uint32Array,
           points,
-          bandWidth(shot.strain),
+          STROKE,
         );
+        const shadowGeom = arc.shadow.mesh.geometry;
+        const shadowAttr = shadowGeom.getAttribute('position') as THREE.BufferAttribute;
+        const shadowIndex = shadowGeom.getIndex() as THREE.BufferAttribute;
+        const shadowCount = writeStrokeShadow(
+          shadowAttr.array as Float32Array,
+          shadowIndex.array as Uint32Array,
+          points,
+          STROKE,
+          NEAR_CAST,
+        );
+        shadowGeom.setDrawRange(0, shadowCount);
+        shadowAttr.needsUpdate = true;
+        shadowIndex.needsUpdate = true;
+        const cap = STROKE / 2;
+        const tips = [points[0], points[points.length - 1]];
+        for (let k = 0; k < 2; k++) {
+          const end = bandEnds[i * 2 + k];
+          end.position.set(tips[k].x, tips[k].y, 0.5);
+          end.scale.set(cap, cap, 1);
+        }
         geom.setDrawRange(0, count);
         attr.needsUpdate = true;
         index.needsUpdate = true;

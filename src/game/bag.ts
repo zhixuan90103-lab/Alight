@@ -19,14 +19,19 @@ export function clearCloth(): Cloth {
   return { on: false, nx: 0, ny: 1, cx: 0, cy: 0, give: 0 };
 }
 
-/** Inner half-width of the lip. Wider than the ball, with a short rim. */
+/** Inner half-width. The bottom is a semicircle of this radius. */
 export function bagMouthHalf(): number {
-  return BIRD_R * 1.45;
+  return BIRD_R * 1.7;
 }
 
-/** How far the round seat sits below the lip. */
+/** Straight wall above the semicircle, so the pocket reads as a tall U. */
+export function bagLeg(): number {
+  return BIRD_R * 3.2;
+}
+
+/** Mouth down to the ball's rest point on the round bottom. */
 export function bagDepth(): number {
-  return BIRD_R * 1.15;
+  return bagLeg() + bagMouthHalf() - BIRD_R;
 }
 
 /** Lip center. The opening faces up. */
@@ -40,57 +45,32 @@ export function bagSeat(at: { x: number; y: number } = BAG_AT): { x: number; y: 
   return { x: mouth.x, y: mouth.y - bagDepth() };
 }
 
-/** Lower touch point of the line from the lip onto the seat circle. */
-function lowerTangent(
-  seat: { x: number; y: number },
-  radius: number,
-  from: { x: number; y: number },
-): { x: number; y: number } {
-  const dx = from.x - seat.x;
-  const dy = from.y - seat.y;
-  const d2 = dx * dx + dy * dy;
-  const reach = Math.sqrt(Math.max(0, d2 - radius * radius));
-  const a = {
-    x: seat.x + (radius * radius * dx - radius * reach * dy) / d2,
-    y: seat.y + (radius * radius * dy + radius * reach * dx) / d2,
-  };
-  const b = {
-    x: seat.x + (radius * radius * dx + radius * reach * dy) / d2,
-    y: seat.y + (radius * radius * dy - radius * reach * dx) / d2,
-  };
-  return a.y < b.y ? a : b;
-}
-
-/** Short straight rim, then the round seat. The rim meets the seat on its tangent. */
-function bowl(at: { x: number; y: number }, seatR: number, mouthHalf: number): Array<{ x: number; y: number }> {
+/** Open U. Vertical sides, semicircular bottom. `outset` grows a parallel centerline. */
+function bowl(at: { x: number; y: number }, outset: number): Array<{ x: number; y: number }> {
   const mouth = bagMouth(at);
-  const seat = bagSeat(at);
-  const left = { x: mouth.x - mouthHalf, y: mouth.y };
-  const right = { x: mouth.x + mouthHalf, y: mouth.y };
-  const tl = lowerTangent(seat, seatR, left);
-  const tr = lowerTangent(seat, seatR, right);
-  let a0 = Math.atan2(tl.y - seat.y, tl.x - seat.x);
-  let a1 = Math.atan2(tr.y - seat.y, tr.x - seat.x);
-  if (a1 < a0) a1 += Math.PI * 2;
-  const points: Array<{ x: number; y: number }> = [left];
-  const steps = 16;
-  for (let i = 0; i <= steps; i++) {
-    const a = a0 + ((a1 - a0) * i) / steps;
-    points.push({ x: seat.x + Math.cos(a) * seatR, y: seat.y + Math.sin(a) * seatR });
+  const half = bagMouthHalf() + outset;
+  const leg = bagLeg();
+  const seat = { x: mouth.x, y: mouth.y - leg };
+  const left = { x: mouth.x - half, y: mouth.y };
+  const right = { x: mouth.x + half, y: mouth.y };
+  const points: Array<{ x: number; y: number }> = [left, { x: left.x, y: seat.y }];
+  const steps = 18;
+  for (let i = 1; i < steps; i++) {
+    const a = Math.PI + (Math.PI * i) / steps;
+    points.push({ x: seat.x + Math.cos(a) * half, y: seat.y + Math.sin(a) * half });
   }
-  points.push(right);
+  points.push({ x: right.x, y: seat.y }, right);
   return points;
 }
 
-/** Inner edge. The lip is the mouth. The seat matches the ball. */
+/** Inner edge. The lip is the mouth. The bottom is wider than the ball. */
 export function bagOuterPoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
-  return bowl(at, BIRD_R, bagMouthHalf());
+  return bowl(at, 0);
 }
 
 /** Stroke centerline, one half-width outside the inner edge. */
 export function bagStrokePoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
-  const half = bagStroke() / 2;
-  return bowl(at, BIRD_R + half, bagMouthHalf() + half);
+  return bowl(at, bagStroke() / 2);
 }
 
 export function aboveOpenMouth(x: number, y: number, at: { x: number; y: number } = BAG_AT): boolean {
