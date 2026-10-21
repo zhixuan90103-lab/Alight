@@ -31,18 +31,6 @@ import { haptics } from './utils/haptics';
 const shell = document.getElementById('shell')!;
 const viewportEl = document.getElementById('viewport')!;
 const stage = document.getElementById('stage')!;
-const heartsEl = document.getElementById('hearts')!;
-
-function paintHearts(count: number): void {
-  heartsEl.replaceChildren(
-    ...[0, 1, 2].map((i) => {
-      const dot = document.createElement('span');
-      dot.className = i < count ? 'heart is-full' : 'heart';
-      return dot;
-    }),
-  );
-}
-
 async function boot(): Promise<void> {
   applyNativeClass();
   const native = Capacitor.isNativePlatform();
@@ -50,7 +38,6 @@ async function boot(): Promise<void> {
   const scene = new THREE.Scene();
   const sim = await Sim.create();
   const view = createPlayView(scene);
-  paintHearts(sim.hearts);
   const uiRoot = document.getElementById('ui-root');
   const bagCounts = LANE_X.map((x, i) => {
     const el = document.createElement('div');
@@ -91,7 +78,8 @@ async function boot(): Promise<void> {
     const x = ((event.clientX - rect.left) / rect.width) * DESIGN_WIDTH;
     const y = ((event.clientY - rect.top) / rect.height) * DESIGN_HEIGHT;
     if (!isInDesignBounds(x, y)) return null;
-    return designToWorld(x, y);
+    const world = designToWorld(x, y);
+    return { x: world.x + view.look.x, y: world.y + view.look.y };
   };
 
   const onTune = (event: Event) => (event.target as HTMLElement | null)?.closest?.('#tune');
@@ -136,7 +124,6 @@ async function boot(): Promise<void> {
       if (cue === 'launch') void haptics.impact('medium');
       if (cue === 'asleep') void haptics.impact('heavy');
       if (cue === 'slip' || cue === 'miss' || cue === 'gone') void haptics.impact('rigid');
-      if (cue === 'miss' || cue === 'gone') paintHearts(sim.hearts);
     }
     const bags = sim.sample().bags;
     for (let i = 0; i < bagCounts.length; i++) {

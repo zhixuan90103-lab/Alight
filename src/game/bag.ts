@@ -5,14 +5,17 @@ export function bagStroke(): number {
   return ROPE_THICKNESS;
 }
 
-/** Inner half-width. The bottom is a semicircle of this radius. */
+/**
+ * Inner half-width. Three balls sit across, so five can rest as three plus two.
+ * The bottom semicircle uses this same radius.
+ */
 export function bagMouthHalf(): number {
-  return BIRD_R * 1.7;
+  return BIRD_R * 3.2;
 }
 
-/** Straight wall above the semicircle, so the pocket reads as a tall U. */
+/** Straight wall above the semicircle. Tall enough for a second layer. */
 export function bagLeg(): number {
-  return BIRD_R * 3.2;
+  return BIRD_R * 4.6;
 }
 
 /** Mouth down to the ball's rest point on the round bottom. */

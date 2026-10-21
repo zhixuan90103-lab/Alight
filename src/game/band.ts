@@ -87,8 +87,11 @@ function tangentCup(
   if (!lefts || !rights) return null;
   let best: Array<{ x: number; y: number }> | null = null;
   let bestD = Infinity;
+  // A downward cup stays on the lower half. An upper tangent is the crown hook.
+  const lowerOnly = Math.sin(cup) < -0.2;
   for (const left of lefts) {
     for (const right of rights) {
+      if (lowerOnly && (Math.sin(left.angle) > 0.05 || Math.sin(right.angle) > 0.05)) continue;
       if (lineHitsBall(sling.left.x, sling.left.y, left.x, left.y, ballX, ballY, seat)) continue;
       if (lineHitsBall(sling.right.x, sling.right.y, right.x, right.y, ballX, ballY, seat)) continue;
       if (linesCross(sling.left.x, sling.left.y, left.x, left.y, sling.right.x, sling.right.y, right.x, right.y)) continue;
@@ -199,7 +202,9 @@ function attach(
   if (!pair) return null;
   let best: { x: number; y: number; angle: number } | null = null;
   let bestD = Infinity;
+  const lowerOnly = Math.sin(cup) < -0.2;
   for (const hit of pair) {
+    if (lowerOnly && Math.sin(hit.angle) > 0.05) continue;
     if (lineHitsBall(anchorX, anchorY, hit.x, hit.y, ballX, ballY, seat)) continue;
     const d = angDist(hit.angle, cup);
     if (d < bestD) {
@@ -361,14 +366,14 @@ export class Band {
     const tx = px * pull;
     const ty = py * pull + -1 * (1 - pull);
     let target = Math.atan2(ty, tx);
-    // Between the anchors, any lift keeps the cradle under the ball.
-    // The blended aim can still point downhill for a frame, and that frame hooks over the crown.
+    // Between the anchors, a catch keeps the cradle under the ball.
+    // Easing the old pull angle leaves one frame where the arc hooks over the crown.
     const between = ballX > this.sling.left.x && ballX < this.sling.right.x;
-    if (between && ballY > this.sling.pouch.y) target = -Math.PI / 2;
+    if (between && (ease || ballY > this.sling.pouch.y)) target = -Math.PI / 2;
     let delta = target - this.cupAngle;
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;
-    this.cupAngle += ease ? delta * 0.28 : delta;
+    this.cupAngle = ease && between ? target : this.cupAngle + (ease ? delta * 0.28 : delta);
     const seat = seatFor(ballX, ballY, this.sling);
     return tangentCup(ballX, ballY, seat, this.cupAngle, this.sling) ?? roundCup(ballX, ballY, seat, this.cupAngle, this.sling);
   }

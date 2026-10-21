@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { bagOuterPoints, ballInBag } from './bag';
+import { bagMouth, bagOuterPoints, ballInBag } from './bag';
 import { Band } from './band';
+import { createFramingCamera } from './camera';
 import { applyBall, applyFixture } from './material';
 import {
   BAGS,
@@ -8,6 +9,8 @@ import {
   woodMaterial,
   BAND_ZETA,
   BIRD_R,
+  EXIT,
+  LEVEL_BALLS,
   DEAD_PULL,
   GRAVITY,
   MASS,
@@ -24,7 +27,7 @@ import {
   slipBallY,
 } from './tune';
 
-export type Phase = 'ready' | 'pulling' | 'launching' | 'flying' | 'catching' | 'settling' | 'asleep' | 'returning' | 'gone';
+export type Phase = 'ready' | 'pulling' | 'launching' | 'flying' | 'catching' | 'settling' | 'asleep' | 'returning' | 'emerging' | 'gone';
 
 export type Feel = 'pull' | 'slip' | 'launch' | 'catch' | 'asleep' | 'miss' | 'gone' | 'knock';
 
@@ -36,6 +39,8 @@ export type ShotSample = {
   strain: number;
   aimX: number;
   aimY: number;
+  /** 1 when the ball is full size. Smaller while it is leaving the pipe. */
+  scale: number;
 };
 
 export type BagSample = {
@@ -46,9 +51,12 @@ export type BagSample = {
 };
 
 export type SimSample = {
-  hearts: number;
   shots: ShotSample[];
   bags: BagSample[];
+  /** World shift of the two-shot camera. The visible bottom is `look.y`. */
+  look: { x: number; y: number };
+  /** Balls that reached the U and stayed there. */
+  resting: Array<{ x: number; y: number }>;
 };
 
 type Shot = {
@@ -73,6 +81,10 @@ type Shot = {
   ropeVy: number;
   /** Band index this ball is settling onto. -1 when it is not being caught. */
   catchOn: number;
+  /** 0 at the pipe mouth, 1 when the ball has reached the pouch. */
+  emerge: number;
+  /** Seconds left before the next ball drops. Negative means no refill is waiting. */
+  refill: number;
 };
 
 let ready: Promise<void> | null = null;
@@ -87,9 +99,11 @@ function len(x: number, y: number): number {
 }
 
 const ANIMATION: ReadonlySet<Phase> = new Set(['launching', 'flying', 'catching', 'returning']);
+/** Same wait after a death and after the ball is in the bowl for good. */
+const REFILL_DELAY = 0.5;
 
 /**
- * Three balls, three bands, three bags. A bag holds as many as the shape allows.
+ * Level 1: one ball on the right band, one U on the left. The bag holds as many as the shape allows.
  * A sling with a ball can be pulled while another ball is in the air.
  */
 export class Sim {
@@ -97,12 +111,16 @@ export class Sim {
   private bagColliders: RAPIER.Collider[] = [];
   private readonly shots: Shot[];
   private readonly gone: boolean[];
-  hearts = 3;
   private accumulator = 0;
   private active: number | null = null;
   private feel: Feel[] = [];
   /** Flyer index + seated index, so one overlap only knocks once. */
   private knocks = new Set<string>();
+  private readonly camera = createFramingCamera();
+  /** Balls already placed in the bowl. Their bodies stay in the world. */
+  private readonly parked: Array<{ bird: RAPIER.RigidBody; collider: RAPIER.Collider }> = [];
+  /** Balls still inside the pipe. The one on the band is already counted out. */
+  private stock = Math.max(0, LEVEL_BALLS - SLINGS.length);
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
@@ -143,6 +161,8 @@ export class Sim {
       ropeVx: 0,
       ropeVy: 0,
       catchOn: -1,
+      emerge: 1,
+      refill: -1,
     };
   }
 
@@ -152,6 +172,11 @@ export class Sim {
       shot.collider.setMass(MASS);
       shot.collider.setRadius(BIRD_R);
       applyBall(shot.bird, shot.collider, ballMaterial());
+    }
+    for (const ball of this.parked) {
+      ball.collider.setMass(MASS);
+      ball.collider.setRadius(BIRD_R);
+      applyBall(ball.bird, ball.collider, ballMaterial());
     }
     this.syncBags();
   }
@@ -189,16 +214,23 @@ export class Sim {
   sample(): SimSample {
     const bags: BagSample[] = BAGS.map((_, i) => ({
       count: this.shots.reduce((n, shot) => {
-        if (shot.phase === 'ready' || shot.phase === 'pulling' || shot.phase === 'launching' || shot.phase === 'gone') return n;
+        if (shot.phase === 'ready' || shot.phase === 'pulling' || shot.phase === 'launching' || shot.phase === 'gone' || shot.phase === 'emerging') return n;
         const p = shot.bird.translation();
+        return n + (ballInBag(p.x, p.y, BAGS[i]) ? 1 : 0);
+      }, 0) + this.parked.reduce((n, ball) => {
+        const p = ball.bird.translation();
         return n + (ballInBag(p.x, p.y, BAGS[i]) ? 1 : 0);
       }, 0),
       gone: this.gone[i],
     }));
     return {
-      hearts: this.hearts,
       shots: this.shots.map((shot) => this.sampleShot(shot)),
       bags,
+      look: { x: this.camera.x, y: this.camera.y },
+      resting: this.parked.map((ball) => {
+        const p = ball.bird.translation();
+        return { x: p.x, y: p.y };
+      }),
     };
   }
 
@@ -217,6 +249,7 @@ export class Sim {
       strain: loaded ? Math.min(1, pull / MAX_PULL) : 0,
       aimX: pull > 1 ? dx / pull : 0,
       aimY: pull > 1 ? dy / pull : 1,
+      scale: shot.phase === 'emerging' ? Math.min(1, shot.emerge / 0.35) : 1,
     };
   }
 
@@ -338,6 +371,21 @@ export class Sim {
     else shot.band.holdTaut(x, y);
   }
 
+  /** The rebound rose past the same line as an upward drag. Drop it and let the empty band catch it. */
+  private releaseCatch(shot: Shot, x: number, y: number): void {
+    const host = shot.catchOn >= 0 ? this.shots[shot.catchOn] : shot;
+    shot.bird.setTranslation({ x, y }, true);
+    shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    shot.bird.setGravityScale(1, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    host.band.holdAtRest();
+    shot.prevX = x;
+    shot.prevY = y;
+    shot.bandTouch = SLINGS.map(() => false);
+    shot.catchOn = -1;
+    shot.phase = 'flying';
+  }
+
   private slipOff(shot: Shot, x: number, y: number): void {
     shot.bird.setTranslation({ x, y }, true);
     shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
@@ -387,6 +435,7 @@ export class Sim {
     shot.prevX = pouch.x;
     shot.prevY = pouch.y;
     shot.bandTouch = SLINGS.map(() => false);
+    shot.bandTouch[this.shots.indexOf(shot)] = true;
     shot.phase = 'flying';
   }
 
@@ -403,6 +452,8 @@ export class Sim {
     shot.ropeVy = 0;
     shot.band.holdSeated();
     shot.catchOn = -1;
+    shot.collider.setEnabled(true);
+    shot.emerge = 1;
     shot.phase = 'ready';
   }
 
@@ -430,8 +481,16 @@ export class Sim {
     shot.catchVy += ay * STEP;
     const x = p.x + shot.catchVx * STEP;
     const y = p.y + shot.catchVy * STEP;
+    const sling = this.shots[shot.catchOn].sling;
+    const slip = slipBallY(x, sling);
+    if (y > slip) {
+      this.releaseCatch(shot, x, slip);
+      return;
+    }
     shot.bird.setNextKinematicTranslation({ x, y });
-    this.shots[shot.catchOn].band.holdUnder(x, y);
+    const band = this.shots[shot.catchOn].band;
+    if (y > meetBallY(x, sling)) band.holdAtRest();
+    else band.holdUnder(x, y);
     if (len(x - pouch.x, y - pouch.y) < 0.4 && len(shot.catchVx, shot.catchVy) < 2) {
       this.claimSling(shot);
       this.restOnPouch(shot);
@@ -480,7 +539,9 @@ export class Sim {
     const now = this.shots.map((host) => this.bandTouches(host, fromX, fromY, x, y));
     shot.bandTouch = now;
     const self = this.shots.indexOf(shot);
+    const falling = shot.bird.linvel().y < 0;
     const arrived = (index: number) =>
+      falling &&
       now[index] &&
       !was[index] &&
       this.canCatchOn(index) &&
@@ -571,12 +632,73 @@ export class Sim {
     for (const shot of this.shots) {
       if (shot.phase === 'launching') this.stepLaunch(shot);
       else if (shot.phase === 'catching') this.stepCatch(shot);
+      else if (shot.refill >= 0) this.stepRefill(shot);
       else if (shot.phase !== 'pulling' && shot.phase !== 'settling' && !this.bandHeld(this.shots.indexOf(shot))) shot.band.step(STEP);
     }
     this.world.step();
+    const flying = this.shots.find((shot) => shot.phase === 'flying');
+    this.camera.step(flying ? flying.bird.translation().y : null, STEP);
     for (const shot of this.shots) {
       this.afterFly(shot);
     }
+  }
+
+  /** The ball fell through the bottom of the current view. The next one waits the same delay. */
+  private die(shot: Shot): void {
+    this.feel.push('gone');
+    shot.phase = 'gone';
+    shot.refill = this.stock > 0 ? REFILL_DELAY : -1;
+    shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.bird.setGravityScale(0, true);
+    shot.collider.setEnabled(false);
+  }
+
+  /** Whole ball is below the lip, so the bowl keeps it. */
+  private sealedInBowl(x: number, y: number): boolean {
+    return BAGS.some((bag) => ballInBag(x, y, bag) && y < bagMouth(bag).y - BIRD_R);
+  }
+
+  private stepRefill(shot: Shot): void {
+    shot.refill -= STEP;
+    if (shot.refill > 0) return;
+    shot.refill = -1;
+    if (shot.phase === 'flying') this.arrive(shot);
+    else if (shot.phase === 'gone') this.issue(shot);
+  }
+
+  /** The flying ball has rested inside the U. It stays. The pipe may issue another. */
+  private arrive(shot: Shot): void {
+    this.parked.push({ bird: shot.bird, collider: shot.collider });
+    this.feel.push('asleep');
+    if (!this.issue(shot)) shot.phase = 'gone';
+  }
+
+  /** Drop the next ball from the marked point. Gravity carries it onto the band. */
+  private issue(shot: Shot): boolean {
+    if (this.stock <= 0) return false;
+    this.stock -= 1;
+    if (this.parked.some((ball) => ball.bird === shot.bird)) {
+      const bird = this.world.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic().setTranslation(EXIT.x, EXIT.y).setCcdEnabled(true),
+      );
+      const collider = this.world.createCollider(RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS), bird);
+      applyBall(bird, collider, ballMaterial());
+      shot.bird = bird;
+      shot.collider = collider;
+    }
+    shot.phase = 'flying';
+    shot.emerge = 0;
+    shot.bandTouch = SLINGS.map(() => false);
+    shot.collider.setEnabled(true);
+    shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    shot.bird.setGravityScale(1, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.bird.setAngvel(0, true);
+    shot.bird.setTranslation({ x: EXIT.x, y: EXIT.y }, true);
+    shot.prevX = EXIT.x;
+    shot.prevY = EXIT.y;
+    return true;
   }
 
   private afterFly(shot: Shot): void {
@@ -592,23 +714,19 @@ export class Sim {
     const fromY = shot.prevY;
     shot.prevX = p.x;
     shot.prevY = p.y;
-    if (this.catchArrival(shot, fromX, fromY, p.x, p.y)) return;
-    const out = p.x < -40 || p.x > 430 || p.y < -40 || p.y > 900;
-    if (out) this.miss(shot);
-  }
-
-  private miss(shot: Shot): void {
-    this.hearts -= 1;
-    if (this.hearts <= 0) {
-      shot.phase = 'gone';
-      shot.bird.setLinvel({ x: 0, y: 0 }, true);
-      shot.bird.setGravityScale(0, true);
-      this.feel.push('gone');
+    if (p.y < this.camera.y) {
+      this.die(shot);
       return;
     }
-    shot.phase = 'returning';
-    shot.returnIn = 0.35;
-    this.feel.push('miss');
+    if (this.sealedInBowl(p.x, p.y)) {
+      if (shot.refill < 0) {
+        if (this.stock <= 0) this.arrive(shot);
+        else shot.refill = REFILL_DELAY;
+      }
+      return;
+    }
+    if (shot.refill >= 0 && !BAGS.some((bag) => ballInBag(p.x, p.y, bag))) shot.refill = -1;
+    this.catchArrival(shot, fromX, fromY, p.x, p.y);
   }
 }
 

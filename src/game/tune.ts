@@ -11,7 +11,7 @@ export let MASS = 1;
  * Rest: sag = mass × gravity / stiffness.
  * Release: speed = pull length × √(stiffness / mass). Finger speed is ignored.
  */
-export let STIFFNESS = 150;
+export let STIFFNESS = 200;
 /**
  * The band itself is light, so it retracts faster than the ball's flight.
  * After the ball leaves, internal friction (zeta) lets it overshoot once, then stop.
@@ -21,12 +21,12 @@ export let ROPE_MASS = MASS / 9;
 export let BAND_ZETA = 0.3;
 /** Ball contact. The panel edits these live. Air damping is linearDamping. */
 export let BALL_RESTITUTION = 0.05;
-export let BALL_FRICTION = 0.5;
+export let BALL_FRICTION = 1;
 export let BALL_DAMPING = 0;
 /** Wooden bowl restitution. The panel edits this live. */
-export let BAG_RESTITUTION = 0.1;
+export let BAG_RESTITUTION = 0.25;
 /** Wooden bowl friction. Also its fixture damping. The panel edits this live. */
-export let BAG_FRICTION = 0.6;
+export let BAG_FRICTION = 2;
 export let DEAD_PULL = 28;
 export let BIRD_R = 18;
 export let ROPE_THICKNESS = 7;
@@ -55,15 +55,18 @@ export type Sling = {
   mid: { x: number; y: number };
 };
 
-/** Three pouches in a row. Each cradle is narrow enough that the neighbors do not overlap. */
-export const LANE_X = [78, 195, 312];
-/** Short enough that the gap between neighboring bands is wider than the ball. */
-const LANE_REACH = 32;
+/** Level 1: the right-hand pouch, half a ball left of 312. */
+export const LANE_X = [312 - BIRD_R];
+/** Rest length between the rivets. The ball sits on the midpoint. */
+export let BAND_LENGTH = 100;
+/** How far a pull may go, in band lengths. Longer bands still pull farther. */
+const BAND_PULL_SPAN = 1.6;
 
 export function slingAt(x: number): Sling {
   const pouch = { x, y: POUCH.y };
-  const left = { x: x - LANE_REACH, y: pouch.y + CRADLE_RISE };
-  const right = { x: x + LANE_REACH, y: pouch.y + CRADLE_RISE };
+  const half = BAND_LENGTH / 2;
+  const left = { x: x - half, y: pouch.y + CRADLE_RISE };
+  const right = { x: x + half, y: pouch.y + CRADLE_RISE };
   return {
     pouch,
     left,
@@ -72,14 +75,23 @@ export function slingAt(x: number): Sling {
   };
 }
 
-export const SLINGS = LANE_X.map(slingAt);
-/** Three bags, one above each pouch. The middle mouth sits lower. How many balls fit is the shape. */
-export const BAG_Y = [268, 428, 268];
-export const BAGS = LANE_X.map((x, i) => designToWorld(x, BAG_Y[i]));
+/** Balls this level will issue. The first starts on the band. The pipe holds the rest. */
+export const LEVEL_BALLS = 5;
 
-export const ANCHOR_L = SLINGS[1].left;
-export const ANCHOR_R = SLINGS[1].right;
-export const SLING_MID = SLINGS[1].mid;
+export const SLINGS = LANE_X.map(slingAt);
+/** Level 1: the left-hand U, shifted right by half its opening. */
+export const BAG_X = [78 + BIRD_R * 2.2];
+export const BAG_Y = [268];
+export const BAGS = BAG_X.map((x, i) => designToWorld(x, BAG_Y[i]));
+/**
+ * Where the next ball appears. Design y is down.
+ * Measured from the marked point directly above the pouch.
+ */
+export const EXIT = designToWorld(LANE_X[0], 472);
+
+export const ANCHOR_L = SLINGS[0].left;
+export const ANCHOR_R = SLINGS[0].right;
+export const SLING_MID = SLINGS[0].mid;
 
 export function restSag(mass: number): number {
   return (mass * GRAVITY) / STIFFNESS;
@@ -91,13 +103,13 @@ export let EMPTY_SAG = restSag(ROPE_MASS);
 export const STEP = 1 / 60;
 export const MAX_CATCHUP = 0.25;
 
-/** Design point of the middle bag. The row lives in BAGS. */
-export const BAG_AT = BAGS[1];
+/** Design point of the level-1 bag. */
+export const BAG_AT = BAGS[0];
 /** Turn the blue bag off to shoot with no target. On by default. */
 export let SHOW_BAG = true;
 
-/** The band's maximum stretch, from the pouch straight down to the bottom of the screen. */
-export let MAX_PULL = POUCH.y - BIRD_R;
+/** How far the band may be drawn. 1.6 times its length, 160 pixels at the default. */
+export let MAX_PULL = BAND_LENGTH * BAND_PULL_SPAN;
 
 /** How far the ball may rise past the empty band before the finger loses it. */
 export let SLIP_LIFT = 18;
@@ -116,7 +128,7 @@ export type TunePatch = {
   birdR?: number;
   ropeThickness?: number;
   pullThin?: number;
-  maxPull?: number;
+  bandLength?: number;
   slipLift?: number;
   showBag?: boolean;
 };
@@ -125,6 +137,13 @@ function refreshDerived(): void {
   ROPE_MASS = MASS / 9;
   REST_SAG = restSag(MASS);
   EMPTY_SAG = restSag(ROPE_MASS);
+  MAX_PULL = BAND_LENGTH * BAND_PULL_SPAN;
+  for (const sling of SLINGS) {
+    const half = BAND_LENGTH / 2;
+    sling.left.x = sling.pouch.x - half;
+    sling.right.x = sling.pouch.x + half;
+    sling.mid.x = sling.pouch.x;
+  }
 }
 
 /** Live tune used by the on-screen panel. Derived sag and rope mass follow mass, gravity, and stiffness. */
@@ -142,7 +161,7 @@ export function writeTune(patch: TunePatch): void {
   if (patch.birdR !== undefined) BIRD_R = patch.birdR;
   if (patch.ropeThickness !== undefined) ROPE_THICKNESS = patch.ropeThickness;
   if (patch.pullThin !== undefined) BAND_PULL_THIN = patch.pullThin;
-  if (patch.maxPull !== undefined) MAX_PULL = patch.maxPull;
+  if (patch.bandLength !== undefined) BAND_LENGTH = patch.bandLength;
   if (patch.slipLift !== undefined) SLIP_LIFT = patch.slipLift;
   if (patch.showBag !== undefined) SHOW_BAG = patch.showBag;
   refreshDerived();
@@ -157,7 +176,7 @@ export function woodMaterial(): Material {
 }
 
 /** Empty-band height at this x. Outside the anchors the curve is the anchor height. */
-export function emptyBandY(x: number, sling: Sling = SLINGS[1]): number {
+export function emptyBandY(x: number, sling: Sling = SLINGS[0]): number {
   const span = sling.right.x - sling.left.x;
   const t = Math.min(1, Math.max(0, (x - sling.left.x) / span));
   return sling.mid.y - EMPTY_SAG * 4 * t * (1 - t);
@@ -170,12 +189,12 @@ function seatAt(x: number, y: number, sling: Sling): number {
 }
 
 /** Ball center when it is just sitting on the empty band. */
-export function meetBallY(x: number, sling: Sling = SLINGS[1]): number {
+export function meetBallY(x: number, sling: Sling = SLINGS[0]): number {
   const y = emptyBandY(x, sling) + BIRD_R;
   return emptyBandY(x, sling) + seatAt(x, y, sling);
 }
 
 /** Ball center where an upward drag lets go. A little above the empty band. */
-export function slipBallY(x: number, sling: Sling = SLINGS[1]): number {
+export function slipBallY(x: number, sling: Sling = SLINGS[0]): number {
   return meetBallY(x, sling) + SLIP_LIFT;
 }

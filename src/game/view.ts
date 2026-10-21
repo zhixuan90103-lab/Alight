@@ -6,6 +6,7 @@ import {
   BAGS,
   bandWidth,
   BIRD_R,
+  LEVEL_BALLS,
   SHOW_BAG,
   SLINGS,
 } from './tune';
@@ -20,12 +21,11 @@ function circle(radius: number, color: number, segments = 40): THREE.Mesh {
 }
 
 /** Flat blue field, cyan mechanisms, gold balls, one long shadow down-right. */
-const FIELD = 0x4777cc;
-const CYAN = 0x79d0ff;
+const FIELD = 0x7ea8d3;
 const BAND = 0xffffff;
-const RIVET = 0x111111;
-const GOLD = 0xfaca50;
-const SHADOW = 0x3862ae;
+const RIVET = 0x777268;
+const GOLD = 0xecbf77;
+const SHADOW = 0x608ab6;
 /** Shadow runs down-right. The soft ring is 10% of that length. */
 const SHADOW_X = 14;
 const SHADOW_Y = -14;
@@ -335,6 +335,8 @@ function writeStrokeShadow(
  */
 export function createPlayView(scene: THREE.Scene): {
   camera: THREE.OrthographicCamera;
+  /** World shift of the framing camera. Touch samples add this. */
+  look: { x: number; y: number };
   sync: (sim: Sim, dt: number) => void;
 } {
   scene.background = new THREE.Color(FIELD);
@@ -347,9 +349,12 @@ export function createPlayView(scene: THREE.Scene): {
     0.1,
     50,
   );
-  camera.position.set(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2, 10);
-  camera.lookAt(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2, 0);
+  const homeX = DESIGN_WIDTH / 2;
+  const homeY = DESIGN_HEIGHT / 2;
+  camera.position.set(homeX, homeY, 10);
+  camera.lookAt(homeX, homeY, 0);
   camera.up.set(0, 1, 0);
+  const look = { x: 0, y: 0 };
 
   const shadowMat = new THREE.MeshBasicMaterial({
     color: SHADOW,
@@ -365,8 +370,8 @@ export function createPlayView(scene: THREE.Scene): {
     opacity: 0.35,
     depthWrite: false,
   });
-  const cyanMat = new THREE.MeshBasicMaterial({
-    color: CYAN,
+  const bowlMat = new THREE.MeshBasicMaterial({
+    color: GOLD,
     side: THREE.DoubleSide,
     transparent: true,
     opacity: 1,
@@ -419,7 +424,7 @@ export function createPlayView(scene: THREE.Scene): {
     const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
     const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
     const shadow = mountShadow(shadowGeom);
-    const mesh = new THREE.Mesh(geom, cyanMat);
+    const mesh = new THREE.Mesh(geom, bowlMat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 3;
     scene.add(mesh);
@@ -427,8 +432,8 @@ export function createPlayView(scene: THREE.Scene): {
   });
   const bagEnds: THREE.Mesh[] = [];
   for (let i = 0; i < BAGS.length * 2; i++) {
-    const end = circle(1, CYAN, 64);
-    end.material = cyanMat;
+    const end = circle(1, GOLD, 64);
+    end.material = bowlMat;
     end.renderOrder = 3;
     bagEnds.push(end);
     scene.add(end);
@@ -478,10 +483,21 @@ export function createPlayView(scene: THREE.Scene): {
     scene.add(group);
     return group;
   });
+  const restingBalls = Array.from({ length: LEVEL_BALLS }, () => {
+    const body = circle(1, GOLD);
+    body.material = goldMat;
+    body.renderOrder = 4;
+    body.visible = false;
+    scene.add(body);
+    const shadow = mountShadow(meshGeom(64, 192), NEAR_CAST);
+    shadow.group.visible = false;
+    return { body, shadow };
+  });
   let hum = 0;
 
   return {
     camera,
+    look,
     sync(sim: Sim, dt: number) {
       const s = sim.sample();
       hum += dt;
@@ -532,14 +548,14 @@ export function createPlayView(scene: THREE.Scene): {
         const shown = shot.phase !== 'gone';
         ball.position.set(bx, by, 1);
         ball.visible = shown;
-        ball.scale.set(BIRD_R, BIRD_R, 1);
+        ball.scale.set(BIRD_R * shot.scale, BIRD_R * shot.scale, 1);
         ballShadow.group.visible = shown;
         const ballGeom = ballShadow.mesh.geometry;
         const ballAttr = ballGeom.getAttribute('position') as THREE.BufferAttribute;
         const ballIndex = ballGeom.getIndex() as THREE.BufferAttribute;
         const ballCursor = { v: 0, c: 0 };
         if (shown) {
-          writeDiscSweep(ballAttr.array as Float32Array, ballIndex.array as Uint32Array, bx, by, BIRD_R, 0.2, ballCursor, NEAR_CAST);
+          writeDiscSweep(ballAttr.array as Float32Array, ballIndex.array as Uint32Array, bx, by, BIRD_R * shot.scale, 0.2, ballCursor, NEAR_CAST);
         }
         ballGeom.setDrawRange(0, ballCursor.c);
         ballAttr.needsUpdate = true;
@@ -580,6 +596,27 @@ export function createPlayView(scene: THREE.Scene): {
         attr.needsUpdate = true;
         index.needsUpdate = true;
       }
+      for (let i = 0; i < restingBalls.length; i++) {
+        const held = s.resting[i];
+        const mark = restingBalls[i];
+        mark.body.visible = Boolean(held);
+        mark.shadow.group.visible = Boolean(held);
+        if (!held) continue;
+        mark.body.position.set(held.x, held.y, 1);
+        mark.body.scale.set(BIRD_R, BIRD_R, 1);
+        const geom = mark.shadow.mesh.geometry;
+        const attr = geom.getAttribute('position') as THREE.BufferAttribute;
+        const index = geom.getIndex() as THREE.BufferAttribute;
+        const cursor = { v: 0, c: 0 };
+        writeDiscSweep(attr.array as Float32Array, index.array as Uint32Array, held.x, held.y, BIRD_R, 0.2, cursor, NEAR_CAST);
+        geom.setDrawRange(0, cursor.c);
+        attr.needsUpdate = true;
+        index.needsUpdate = true;
+      }
+      look.x = s.look.x;
+      look.y = s.look.y;
+      camera.position.set(homeX + look.x, homeY + look.y, 10);
+      camera.lookAt(homeX + look.x, homeY + look.y, 0);
     },
   };
 }
