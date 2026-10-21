@@ -327,6 +327,23 @@ export class Band {
     return this.nodes.map((n) => ({ x: n.x, y: n.y }));
   }
 
+  /** Rebuild the empty arc from the sling's current anchors. */
+  placeAtRest(): void {
+    this.live = false;
+    this.amp = 0;
+    this.ampV = 0;
+    for (let i = 0; i < this.nodes.length; i++) {
+      const empty = restAt(i / (BAND_COUNT - 1), this.sling);
+      const n = this.nodes[i];
+      n.rx = empty.x;
+      n.ry = empty.y;
+      n.x = empty.x;
+      n.y = empty.y;
+      n.px = empty.x;
+      n.py = empty.y;
+    }
+  }
+
   /** Ball left. The band hangs on its own mass. */
   holdAtRest(): void {
     this.live = false;

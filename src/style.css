@@ -4,8 +4,8 @@
 
   --design-w: 390;
   --design-h: 844;
-  --shell-bg: #7ea8d3;
-  --stage-bg: #7ea8d3;
+  --shell-bg: #7fa5bf;
+  --stage-bg: #7fa5bf;
   --ink: #79d0ff;
   --gold: #ecbf77;
 
@@ -130,6 +130,10 @@ body {
   pointer-events: none;
 }
 
+.bag-count.is-blue {
+  color: #6fadec;
+}
+
 #hud {
   flex: 1;
   display: flex;
@@ -165,7 +169,7 @@ body {
   border: 0;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 3px 4px 0 #608ab6;
+  box-shadow: 3px 4px 0 #5f8096;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -200,13 +204,21 @@ body {
   height: 18px;
   border-radius: 50%;
   background: var(--gold);
-  box-shadow: 1px 2px 0 #608ab6;
+  box-shadow: 1px 2px 0 #5f8096;
+}
+
+.ball-pip.is-blue {
+  background: #6fadec;
 }
 
 .ball-pip.is-empty {
   background: transparent;
   box-shadow: none;
   border: 2px dashed var(--gold);
+}
+
+.ball-pip.is-blue.is-empty {
+  border-color: #6fadec;
 }
 
 #tune {

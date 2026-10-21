@@ -48,7 +48,7 @@ portrait-webgpu-base/
 | `webDir` | `dist` |
 | `ios.contentInset` | `never` |
 | `ios.scrollEnabled` | `false` |
-| `ios.backgroundColor` | `#7ea8d3` |
+| `ios.backgroundColor` | `#7fa5bf` |
 
 ### 设计尺寸
 

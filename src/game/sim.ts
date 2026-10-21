@@ -5,12 +5,18 @@ import { createFramingCamera } from './camera';
 import { applyBall, applyFixture } from './material';
 import {
   BAGS,
+  BAG_SPEC,
+  BALL_QUEUE,
   ballMaterial,
   woodMaterial,
+  COLOR_SCORE,
+  loadLevelLayout,
+  type BallColor,
   BAND_ZETA,
   BIRD_R,
   EXIT,
   LEVEL_BALLS,
+  LEVEL_ID,
   DEAD_PULL,
   GRAVITY,
   MASS,
@@ -41,6 +47,7 @@ export type ShotSample = {
   aimY: number;
   /** 1 when the ball is full size. Smaller while it is leaving the pipe. */
   scale: number;
+  color: BallColor;
 };
 
 export type BagSample = {
@@ -55,10 +62,12 @@ export type SimSample = {
   bags: BagSample[];
   /** World shift of the two-shot camera. The visible bottom is `look.y`. */
   look: { x: number; y: number };
-  /** Balls that reached the U and stayed there. */
-  resting: Array<{ x: number; y: number }>;
+  /** Balls that reached a U and stayed there. */
+  resting: Array<{ x: number; y: number; color: BallColor }>;
   /** Balls that have already left the exit. The HUD turns that many pips into rings, from the left. */
   issued: number;
+  /** Colors already sent, in the order they left the exits. */
+  issuedColors: BallColor[];
 };
 
 type Shot = {
@@ -83,6 +92,7 @@ type Shot = {
   ropeVy: number;
   /** Band index this ball is settling onto. -1 when it is not being caught. */
   catchOn: number;
+  color: BallColor;
   /** 0 at the pipe mouth, 1 when the ball has reached the pouch. */
   emerge: number;
   /** Seconds left before the next ball drops. Negative means no refill is waiting. */
@@ -116,7 +126,7 @@ export class Sim {
   private readonly bagHandles = new Set<number>();
   private readonly events = new RAPIER.EventQueue(false);
   private readonly shots: Shot[];
-  private readonly gone: boolean[];
+  private gone: boolean[];
   private accumulator = 0;
   private active: number | null = null;
   private feel: Feel[] = [];
@@ -124,11 +134,12 @@ export class Sim {
   private knocks = new Set<string>();
   private readonly camera = createFramingCamera();
   /** Balls already placed in the bowl. Their bodies stay in the world. */
-  private readonly parked: Array<{ bird: RAPIER.RigidBody; collider: RAPIER.Collider }> = [];
+  private readonly parked: Array<{ bird: RAPIER.RigidBody; collider: RAPIER.Collider; color: BallColor }> = [];
   /** Balls still waiting to drop from the exit. */
   private stock = LEVEL_BALLS;
   /** Balls already dropped from the exit. Each one is an empty pip, from the left. */
   private issued = 0;
+  private issuedColors: BallColor[] = [];
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
@@ -170,6 +181,7 @@ export class Sim {
       ropeVx: 0,
       ropeVy: 0,
       catchOn: -1,
+      color: 'gold',
       emerge: 1,
       refill: -1,
     };
@@ -186,7 +198,7 @@ export class Sim {
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setGravityScale(0, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
-    shot.band.holdAtRest();
+    shot.band.placeAtRest();
   }
 
   applyTune(): void {
@@ -210,8 +222,8 @@ export class Sim {
     this.bagColliders = [];
     this.bagHandles.clear();
     if (!SHOW_BAG) return;
-    for (const at of BAGS) {
-      const pts = bagOuterPoints(at);
+    for (let i = 0; i < BAGS.length; i++) {
+      const pts = bagOuterPoints(BAGS[i], i);
       const vertices = new Float32Array(pts.length * 2);
       for (let i = 0; i < pts.length; i++) {
         vertices[i * 2] = pts[i].x;
@@ -226,7 +238,15 @@ export class Sim {
     }
   }
 
-  /** Put level 1 back to an empty band. The first ball drops again after the opening beat. */
+  /** Switch level, then open it the same way as a replay. */
+  loadLevel(id: number): void {
+    loadLevelLayout(id);
+    this.gone = BAGS.map(() => false);
+    this.syncBags();
+    this.restart();
+  }
+
+  /** Empty the band and drop the first ball again after the opening beat. */
   restart(): void {
     for (const ball of this.parked) {
       if (!this.shots.some((shot) => shot.bird === ball.bird)) this.world.removeRigidBody(ball.bird);
@@ -234,28 +254,53 @@ export class Sim {
     this.parked.length = 0;
     this.stock = LEVEL_BALLS;
     this.issued = 0;
+    this.issuedColors = [];
     this.accumulator = 0;
     this.active = null;
     this.knocks.clear();
     this.feel = [];
     this.camera.reset();
-    this.gone.fill(false);
+    this.gone = BAGS.map(() => false);
+    this.syncShots();
     for (const shot of this.shots) this.armEmpty(shot, OPEN_DELAY);
+  }
+
+  /** One shot per sling. Extra bands are removed with their ball. */
+  private syncShots(): void {
+    while (this.shots.length < SLINGS.length) this.shots.push(this.makeShot(SLINGS[this.shots.length]));
+    while (this.shots.length > SLINGS.length) {
+      const shot = this.shots.pop();
+      if (shot) this.world.removeRigidBody(shot.bird);
+    }
+    for (let i = 0; i < this.shots.length; i++) {
+      const shot = this.shots[i];
+      shot.sling = SLINGS[i];
+      shot.band = new Band(SLINGS[i]);
+    }
+  }
+
+  /** The drop point sits above this band, at the shared exit height. */
+  private exitAt(shot: Shot): { x: number; y: number } {
+    return { x: shot.sling.pouch.x, y: EXIT.y };
   }
 
   /**
    * Set once every ball has left play: parked in the U, or gone below the view.
    * `inBag` is how many of those balls are still inside the U.
    */
-  result(): { inBag: number } | null {
+  result(): { inBag: number; matched: number } | null {
     if (this.stock > 0) return null;
     if (this.shots.some((shot) => shot.phase !== 'gone' || shot.refill >= 0)) return null;
     let inBag = 0;
+    let matched = 0;
     for (const ball of this.parked) {
       const p = ball.bird.translation();
-      if (BAGS.some((bag) => ballInBag(p.x, p.y, bag))) inBag += 1;
+      const index = BAGS.findIndex((_, i) => ballInBag(p.x, p.y, i));
+      if (index < 0) continue;
+      inBag += 1;
+      if (!COLOR_SCORE || BAG_SPEC[index].color === ball.color) matched += 1;
     }
-    return { inBag };
+    return { inBag, matched };
   }
 
   static async create(): Promise<Sim> {
@@ -274,11 +319,13 @@ export class Sim {
     const bags: BagSample[] = BAGS.map((_, i) => ({
       count: this.shots.reduce((n, shot) => {
         if (shot.phase === 'ready' || shot.phase === 'pulling' || shot.phase === 'launching' || shot.phase === 'gone' || shot.phase === 'emerging') return n;
+        if (BAG_SPEC[i]?.color !== shot.color) return n;
         const p = shot.bird.translation();
-        return n + (ballInBag(p.x, p.y, BAGS[i]) ? 1 : 0);
+        return n + (ballInBag(p.x, p.y, i) ? 1 : 0);
       }, 0) + this.parked.reduce((n, ball) => {
+        if (BAG_SPEC[i]?.color !== ball.color) return n;
         const p = ball.bird.translation();
-        return n + (ballInBag(p.x, p.y, BAGS[i]) ? 1 : 0);
+        return n + (ballInBag(p.x, p.y, i) ? 1 : 0);
       }, 0),
       gone: this.gone[i],
     }));
@@ -288,9 +335,10 @@ export class Sim {
       look: { x: this.camera.x, y: this.camera.y },
       resting: this.parked.map((ball) => {
         const p = ball.bird.translation();
-        return { x: p.x, y: p.y };
+        return { x: p.x, y: p.y, color: ball.color };
       }),
       issued: this.issued,
+      issuedColors: this.issuedColors.slice(),
     };
   }
 
@@ -310,6 +358,7 @@ export class Sim {
       aimX: pull > 1 ? dx / pull : 0,
       aimY: pull > 1 ? dy / pull : 1,
       scale: shot.phase === 'emerging' ? Math.min(1, shot.emerge / 0.35) : 1,
+      color: shot.color,
     };
   }
 
@@ -329,12 +378,13 @@ export class Sim {
     }
     if (best < 0) return;
     const shot = this.shots[best];
-    if (shot.phase === 'catching') this.claimSling(shot);
-    else if (ANIMATION.has(shot.phase)) this.restOnPouch(shot);
-    shot.phase = 'pulling';
-    this.active = best;
+    const seated = shot.phase === 'catching' ? this.settleCatch(shot) : best;
+    if (seated !== best || ANIMATION.has(this.shots[seated].phase)) this.restOnPouch(this.shots[seated]);
+    const holder = this.shots[seated];
+    holder.phase = 'pulling';
+    this.active = seated;
     this.feel.push('pull');
-    this.movePull(shot, worldX, worldY);
+    this.movePull(holder, worldX, worldY);
   }
 
   pointerMove(worldX: number, worldY: number): void {
@@ -503,6 +553,7 @@ export class Sim {
     shot.ropeVy = 0;
     shot.band.holdSeated();
     shot.catchOn = -1;
+    shot.refill = -1;
     shot.collider.setEnabled(true);
     shot.emerge = 1;
     shot.phase = 'ready';
@@ -543,29 +594,37 @@ export class Sim {
     if (y > meetBallY(x, sling)) band.holdAtRest();
     else band.holdUnder(x, y);
     if (len(x - pouch.x, y - pouch.y) < 0.4 && len(shot.catchVx, shot.catchVy) < 2) {
-      this.claimSling(shot);
-      this.restOnPouch(shot);
+      this.settleCatch(shot);
     }
   }
 
-  /** The ball sits on the band that caught it. That band's old ball keeps the emptied sling. */
-  private claimSling(shot: Shot): void {
+  /**
+   * A caught ball sits on the band that caught it. The bands do not swap.
+   * The ball's own band, now empty, refills its own color. The catching band
+   * waits until this ball leaves, then refills its own color.
+   */
+  private settleCatch(shot: Shot): number {
     const self = this.shots.indexOf(shot);
-    const hostIndex = shot.catchOn;
-    if (hostIndex === self || hostIndex < 0) return;
+    const hostIndex = shot.catchOn < 0 ? self : shot.catchOn;
+    if (hostIndex === self) {
+      this.restOnPouch(shot);
+      return self;
+    }
     const host = this.shots[hostIndex];
-    const sling = shot.sling;
-    const band = shot.band;
-    shot.sling = host.sling;
-    shot.band = host.band;
-    host.sling = sling;
-    host.band = band;
-    const pouch = host.sling.pouch;
-    host.ropeX = pouch.x;
-    host.ropeY = pouch.y;
-    host.ropeVx = 0;
-    host.ropeVy = 0;
+    const bird = shot.bird;
+    const collider = shot.collider;
+    const color = shot.color;
+    shot.bird = host.bird;
+    shot.collider = host.collider;
+    shot.color = this.colorFor(shot);
+    host.bird = bird;
+    host.collider = collider;
+    host.color = color;
     host.band.holdAtRest();
+    const wait = this.remaining(shot.color) > 0 ? REFILL_DELAY : -1;
+    this.armEmpty(shot, wait);
+    this.restOnPouch(host);
+    return hostIndex;
   }
 
   /** A band holds one ball. Empty bands catch. They are not pulled. */
@@ -702,7 +761,7 @@ export class Sim {
   /** The ball fell through the bottom of the current view. The next one waits the same delay. */
   private die(shot: Shot): void {
     shot.phase = 'gone';
-    shot.refill = this.stock > 0 ? REFILL_DELAY : -1;
+    shot.refill = this.remaining(this.colorFor(shot)) > 0 ? REFILL_DELAY : -1;
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setGravityScale(0, true);
@@ -711,10 +770,11 @@ export class Sim {
 
   /** Whole ball is below the lip, so the bowl keeps it. */
   private sealedInBowl(x: number, y: number): boolean {
-    return BAGS.some((bag) => ballInBag(x, y, bag) && y < bagMouth(bag).y - BIRD_R);
+    return BAGS.some((bag, i) => ballInBag(x, y, i) && y < bagMouth(bag).y - BIRD_R);
   }
 
   private stepRefill(shot: Shot): void {
+    if (this.bandHeld(this.shots.indexOf(shot))) return;
     shot.refill -= STEP;
     if (shot.refill > 0) return;
     shot.refill = -1;
@@ -724,18 +784,33 @@ export class Sim {
 
   /** The flying ball has rested inside the U. It stays. The pipe may issue another. */
   private arrive(shot: Shot): void {
-    this.parked.push({ bird: shot.bird, collider: shot.collider });
+    this.parked.push({ bird: shot.bird, collider: shot.collider, color: shot.color });
     if (!this.issue(shot)) shot.phase = 'gone';
   }
 
-  /** Drop the next ball from the marked point. Gravity carries it onto the band. */
+  /** Level 2: the left band only drops blue, the right band only drops gold. */
+  private colorFor(shot: Shot): BallColor {
+    if (LEVEL_ID !== 2) return 'gold';
+    return SLINGS.indexOf(shot.sling) === 0 ? 'blue' : 'gold';
+  }
+
+  private remaining(color: BallColor): number {
+    const total = BALL_QUEUE.filter((item) => item === color).length;
+    const used = this.issuedColors.filter((item) => item === color).length;
+    return total - used;
+  }
+
+  /** Drop the next ball of this band's color from the marked point. Gravity carries it onto the band. */
   private issue(shot: Shot): boolean {
-    if (this.stock <= 0) return false;
+    const color = this.colorFor(shot);
+    if (this.remaining(color) <= 0) return false;
     this.stock -= 1;
+    this.issuedColors.push(color);
+    shot.color = color;
     this.issued += 1;
     if (this.parked.some((ball) => ball.bird === shot.bird)) {
       const bird = this.world.createRigidBody(
-        RAPIER.RigidBodyDesc.dynamic().setTranslation(EXIT.x, EXIT.y).setCcdEnabled(true),
+        RAPIER.RigidBodyDesc.dynamic().setTranslation(this.exitAt(shot).x, this.exitAt(shot).y).setCcdEnabled(true),
       );
       const collider = this.world.createCollider(
         RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
@@ -753,9 +828,10 @@ export class Sim {
     shot.bird.setGravityScale(1, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setAngvel(0, true);
-    shot.bird.setTranslation({ x: EXIT.x, y: EXIT.y }, true);
-    shot.prevX = EXIT.x;
-    shot.prevY = EXIT.y;
+    const exit = this.exitAt(shot);
+    shot.bird.setTranslation({ x: exit.x, y: exit.y }, true);
+    shot.prevX = exit.x;
+    shot.prevY = exit.y;
     return true;
   }
 
@@ -783,7 +859,7 @@ export class Sim {
       }
       return;
     }
-    if (shot.refill >= 0 && !BAGS.some((bag) => ballInBag(p.x, p.y, bag))) shot.refill = -1;
+    if (shot.refill >= 0 && !BAGS.some((_, i) => ballInBag(p.x, p.y, i))) shot.refill = -1;
     this.catchArrival(shot, fromX, fromY, p.x, p.y);
   }
 }

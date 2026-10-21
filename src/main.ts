@@ -24,6 +24,7 @@ import { createRenderer, resizeToDesign } from './create-renderer';
 import { designToWorld } from './game/frame';
 import { Sim } from './game/sim';
 import { mountHud, starsFor } from './game/hud';
+import { LEVEL_COUNT, LEVEL_ID } from './game/tune';
 import { createPlayView } from './game/view';
 import { beginCharge, endCharge, updateCharge } from './game/pullHaptics';
 import { haptics } from './utils/haptics';
@@ -43,15 +44,31 @@ async function boot(): Promise<void> {
   let resultShown = false;
   /** Seconds left before the result card. Negative means the level is not finished. */
   let resultWait = -1;
+  const clearResult = () => {
+    pointerId = null;
+    resultShown = false;
+    resultWait = -1;
+    hud?.hideResult();
+    sim.cancelPull();
+  };
   const hud = uiRoot
-    ? mountHud(uiRoot, sim, () => {
-        pointerId = null;
-        resultShown = false;
-        resultWait = -1;
-        hud?.hideResult();
-        sim.cancelPull();
-        sim.restart();
-      })
+    ? mountHud(
+        uiRoot,
+        sim,
+        () => {
+          clearResult();
+          sim.restart();
+        },
+        () => {
+          if (LEVEL_ID >= 2) return;
+          clearResult();
+          sim.loadLevel(2);
+        },
+        () => {
+          clearResult();
+          sim.loadLevel(LEVEL_ID >= LEVEL_COUNT ? 1 : LEVEL_ID + 1);
+        },
+      )
     : null;
 
   let preview: DevicePreviewController;
@@ -132,7 +149,7 @@ async function boot(): Promise<void> {
           resultShown = true;
           pointerId = null;
           sim.cancelPull();
-          hud.showResult(starsFor(outcome.inBag));
+          hud.showResult(starsFor(outcome));
         }
       }
     }

@@ -1,17 +1,28 @@
 import { bagMouth } from './bag';
 import { worldToDesign } from './frame';
 import type { Sim, SimSample } from './sim';
-import { BAGS, LEVEL_BALLS, SHOW_BAG } from './tune';
+import { BAGS, BAG_SPEC, BALL_QUEUE, COLOR_SCORE, LEVEL_BALLS, LEVEL_COUNT, LEVEL_ID, SHOW_BAG } from './tune';
 import { hudIcon, mountTunePanel } from './tunePanel';
 
 /** Design pixels from the bowl lip down to the score. */
 const BAG_COUNT_DROP = 28;
 
-/** 5 in the bowl is 3 stars, 3–4 is 2, 1–2 is 1, none is a miss. */
-export function starsFor(inBag: number): number {
-  if (inBag >= LEVEL_BALLS) return 3;
-  if (inBag >= 3) return 2;
-  if (inBag >= 1) return 1;
+/**
+ * Level 1: 5 in the bowl is 3 stars, 3–4 is 2, 1–2 is 1.
+ * Level 2: every ball in its own color is 3. One or more right, and at most two wrong, is 2.
+ * One or more right and three or more wrong is 1. None right is 0.
+ */
+export function starsFor(outcome: { inBag: number; matched: number }): number {
+  if (!COLOR_SCORE) {
+    if (outcome.inBag >= LEVEL_BALLS) return 3;
+    if (outcome.inBag >= 3) return 2;
+    if (outcome.inBag >= 1) return 1;
+    return 0;
+  }
+  const wrong = LEVEL_BALLS - outcome.matched;
+  if (outcome.matched >= LEVEL_BALLS) return 3;
+  if (outcome.matched >= 1 && wrong <= 2) return 2;
+  if (outcome.matched >= 1) return 1;
   return 0;
 }
 
@@ -31,7 +42,7 @@ function iconButton(label: string): HTMLButtonElement {
 }
 
 /** Ball pips, bowl score, settings, replay, and the result card. */
-export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud {
+export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, nextLevel: () => void, jumpLevel: () => void): Hud {
   const hud = document.createElement('div');
   hud.id = 'hud';
 
@@ -54,11 +65,14 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
   const again = iconButton('重玩');
   again.append(hudIcon('arrow-clockwise'));
   again.addEventListener('click', replay);
+  const jump = iconButton('跳关');
+  jump.append(hudIcon('arrow-right'));
+  jump.addEventListener('click', jumpLevel);
 
   top.append(balls, actions);
   hud.append(top);
   uiRoot.prepend(hud);
-  actions.append(again);
+  actions.append(again, jump);
   mountTunePanel(uiRoot, actions, sim);
 
   const result = document.createElement('div');
@@ -87,17 +101,17 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
 
   const next = iconButton('下一关');
   next.append(hudIcon('arrow-right'));
+  next.addEventListener('click', nextLevel);
 
   resultActions.append(resultReplay, next);
   card.append(stars, resultActions);
   result.append(card);
   uiRoot.append(result);
 
-  const mouths = BAGS.map((bag) => bagMouth(bag));
-  const bagCounts = mouths.map(() => {
+  const bagCounts = [0, 1].map(() => {
     const el = document.createElement('div');
     el.className = 'bag-count';
-    el.textContent = `0/${LEVEL_BALLS}`;
+    el.textContent = '0/0';
     uiRoot.append(el);
     return el;
   });
@@ -108,16 +122,37 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
 
   return {
     sync(sample: SimSample) {
-      const gone = Math.min(LEVEL_BALLS, Math.max(0, sample.issued));
-      pips.forEach((pip, i) => pip.classList.toggle('is-empty', i < gone));
+      while (pips.length < LEVEL_BALLS) {
+        const dot = document.createElement('span');
+        dot.className = 'ball-pip';
+        balls.append(dot);
+        pips.push(dot);
+      }
+      balls.setAttribute('aria-label', `本关 ${LEVEL_BALLS} 颗球`);
+      const sent = { gold: 0, blue: 0 };
+      for (const color of sample.issuedColors) sent[color] += 1;
+      const seen = { gold: 0, blue: 0 };
+      pips.forEach((pip, i) => {
+        const live = i < LEVEL_BALLS;
+        pip.hidden = !live;
+        if (!live) return;
+        const color = BALL_QUEUE[i] ?? 'gold';
+        seen[color] += 1;
+        pip.classList.toggle('is-empty', sent[color] >= seen[color]);
+        pip.classList.toggle('is-blue', color === 'blue');
+      });
       for (let i = 0; i < bagCounts.length; i++) {
         const el = bagCounts[i];
-        const show = SHOW_BAG && !sample.bags[i].gone;
+        const bag = sample.bags[i];
+        const show = Boolean(bag) && SHOW_BAG && !bag.gone && Boolean(BAGS[i]);
         el.style.display = show ? 'block' : 'none';
-        const design = worldToDesign(mouths[i].x - sample.look.x, mouths[i].y - sample.look.y);
+        if (!show || !BAGS[i]) continue;
+        const mouth = bagMouth(BAGS[i]);
+        const design = worldToDesign(mouth.x - sample.look.x, mouth.y - sample.look.y);
         el.style.left = `${design.x}px`;
         el.style.top = `${design.y + BAG_COUNT_DROP}px`;
-        const text = `${sample.bags[i].count}/${LEVEL_BALLS}`;
+        el.classList.toggle('is-blue', BAG_SPEC[i]?.color === 'blue');
+        const text = `${bag.count}/${BAG_SPEC[i]?.quota ?? LEVEL_BALLS}`;
         if (el.textContent !== text) el.textContent = text;
       }
     },
@@ -126,7 +161,7 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void): Hud
         const img = el.querySelector('img');
         if (img) img.src = `./icons/${i < count ? 'star-fill' : 'star'}.svg`;
       });
-      next.hidden = count <= 0;
+      next.hidden = count <= 0 || LEVEL_ID >= LEVEL_COUNT;
       actions.hidden = true;
       result.hidden = false;
     },

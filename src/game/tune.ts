@@ -55,8 +55,6 @@ export type Sling = {
   mid: { x: number; y: number };
 };
 
-/** Level 1: the right-hand pouch, half a ball left of 312. */
-export const LANE_X = [312 - BIRD_R];
 /** Rest length between the rivets. The ball sits on the midpoint. */
 export let BAND_LENGTH = 100;
 /** How far a pull may go, in band lengths. Longer bands still pull farther. */
@@ -75,23 +73,92 @@ export function slingAt(x: number): Sling {
   };
 }
 
-/** Balls this level will issue. The first starts on the band. The pipe holds the rest. */
-export const LEVEL_BALLS = 5;
+export type BallColor = 'gold' | 'blue';
 
-export const SLINGS = LANE_X.map(slingAt);
-/** Level 1: the left-hand U, shifted right by half its opening. */
-export const BAG_X = [78 + BIRD_R * 2.2];
-export const BAG_Y = [268];
-export const BAGS = BAG_X.map((x, i) => designToWorld(x, BAG_Y[i]));
+/** Flat colors. Gold is the level-1 ball. Blue is darker than the field so it stays readable. */
+export const BALL_HEX: Record<BallColor, number> = {
+  gold: 0xecbf77,
+  blue: 0x6fadec,
+};
+
+export type BagSpec = {
+  color: BallColor;
+  /** Mouth half-width, in ball radii. */
+  mouthScale: number;
+  /** Straight wall, in ball radii. */
+  legScale: number;
+  /** Lip label denominator. Level 1 is every ball. Level 2 is that color's count. */
+  quota: number;
+};
+
+/** Which level is on screen. 1 is the single gold U. 2 is the two-color pair. */
+export let LEVEL_ID = 1;
+export const LEVEL_COUNT = 2;
+/** Color match decides the stars. Level 1 scores how many balls are in the U. */
+export let COLOR_SCORE = false;
+/** Issue order. Level 1 is five gold. Level 2 alternates, gold first. */
+export const BALL_QUEUE: BallColor[] = [];
+/** Balls this level will issue. */
+export let LEVEL_BALLS = 5;
+
+/** One band. `loadLevelLayout` moves it. */
+export const SLINGS: Sling[] = [slingAt(312 - BIRD_R)];
+/** Lip anchors, world space. Parallel to `BAG_SPEC`. */
+export const BAGS: Array<{ x: number; y: number }> = [];
+export const BAG_SPEC: BagSpec[] = [];
 /**
  * Where the next ball appears. Design y is down.
  * Measured from the marked point directly above the pouch.
  */
-export const EXIT = designToWorld(LANE_X[0], 472);
+export const EXIT = { x: 0, y: 0 };
 
 export const ANCHOR_L = SLINGS[0].left;
 export const ANCHOR_R = SLINGS[0].right;
 export const SLING_MID = SLINGS[0].mid;
+
+/** Design y of the pouch. Both levels keep this height. */
+const POUCH_DESIGN_Y = 612;
+/** Design y of the exit, above the pouch. */
+const EXIT_DESIGN_Y = 472;
+
+function addBag(x: number, yDown: number, spec: BagSpec): void {
+  BAGS.push(designToWorld(x, yDown));
+  BAG_SPEC.push(spec);
+}
+
+/** Move the bands and the bowls. Does not reset the simulation. */
+export function loadLevelLayout(id: number): void {
+  const level = id === 2 ? 2 : 1;
+  LEVEL_ID = level;
+  BAGS.length = 0;
+  BAG_SPEC.length = 0;
+  BALL_QUEUE.length = 0;
+  const slingX = level === 2 ? [96, 294] : [312 - BIRD_R];
+  while (SLINGS.length < slingX.length) SLINGS.push(slingAt(slingX[SLINGS.length]));
+  SLINGS.length = slingX.length;
+  for (let i = 0; i < slingX.length; i++) {
+    const pouch = designToWorld(slingX[i], POUCH_DESIGN_Y);
+    SLINGS[i].pouch.x = pouch.x;
+    SLINGS[i].pouch.y = pouch.y;
+  }
+  const exit = designToWorld(slingX[0], EXIT_DESIGN_Y);
+  EXIT.x = exit.x;
+  EXIT.y = exit.y;
+  if (level === 2) {
+    COLOR_SCORE = true;
+    LEVEL_BALLS = 6;
+    BALL_QUEUE.push('blue', 'blue', 'blue', 'gold', 'gold', 'gold');
+    const small: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 2.4, quota: 3 };
+    addBag(96, 248, { color: 'gold', ...small });
+    addBag(294, 248, { color: 'blue', ...small });
+  } else {
+    COLOR_SCORE = false;
+    LEVEL_BALLS = 5;
+    BALL_QUEUE.push('gold', 'gold', 'gold', 'gold', 'gold');
+    addBag(78 + BIRD_R * 2.2, 268, { color: 'gold', mouthScale: 3.2, legScale: 4.6, quota: 5 });
+  }
+  refreshDerived();
+}
 
 export function restSag(mass: number): number {
   return (mass * GRAVITY) / STIFFNESS;
@@ -103,8 +170,8 @@ export let EMPTY_SAG = restSag(ROPE_MASS);
 export const STEP = 1 / 60;
 export const MAX_CATCHUP = 0.25;
 
-/** Design point of the level-1 bag. */
-export const BAG_AT = BAGS[0];
+/** Design point of the first bag. Call `loadLevelLayout` before reading this. */
+export const BAG_AT = { x: 0, y: 0 };
 /** Turn the blue bag off to shoot with no target. On by default. */
 export let SHOW_BAG = true;
 
@@ -142,9 +209,18 @@ function refreshDerived(): void {
     const half = BAND_LENGTH / 2;
     sling.left.x = sling.pouch.x - half;
     sling.right.x = sling.pouch.x + half;
+    sling.left.y = sling.pouch.y + CRADLE_RISE;
+    sling.right.y = sling.pouch.y + CRADLE_RISE;
     sling.mid.x = sling.pouch.x;
+    sling.mid.y = (sling.left.y + sling.right.y) / 2;
+  }
+  if (BAGS[0]) {
+    BAG_AT.x = BAGS[0].x;
+    BAG_AT.y = BAGS[0].y;
   }
 }
+
+loadLevelLayout(1);
 
 /** Live tune used by the on-screen panel. Derived sag and rope mass follow mass, gravity, and stiffness. */
 export function writeTune(patch: TunePatch): void {

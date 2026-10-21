@@ -1,4 +1,4 @@
-import { BIRD_R, ROPE_THICKNESS, BAG_AT } from './tune';
+import { BAGS, BAG_SPEC, BIRD_R, ROPE_THICKNESS, BAG_AT } from './tune';
 
 /** Same rest width as the band. A full pull thins only the band. */
 export function bagStroke(): number {
@@ -9,18 +9,18 @@ export function bagStroke(): number {
  * Inner half-width. Three balls sit across, so five can rest as three plus two.
  * The bottom semicircle uses this same radius.
  */
-export function bagMouthHalf(): number {
-  return BIRD_R * 3.2;
+export function bagMouthHalf(index = 0): number {
+  return BIRD_R * (BAG_SPEC[index]?.mouthScale ?? 3.2);
 }
 
-/** Straight wall above the semicircle. Tall enough for a second layer. */
-export function bagLeg(): number {
-  return BIRD_R * 4.6;
+/** Straight wall above the semicircle. Tall enough for a second layer on level 1. */
+export function bagLeg(index = 0): number {
+  return BIRD_R * (BAG_SPEC[index]?.legScale ?? 4.6);
 }
 
 /** Mouth down to the ball's rest point on the round bottom. */
-export function bagDepth(): number {
-  return bagLeg() + bagMouthHalf() - BIRD_R;
+export function bagDepth(index = 0): number {
+  return bagLeg(index) + bagMouthHalf(index) - BIRD_R;
 }
 
 /** Lip center. The opening faces up. */
@@ -35,10 +35,10 @@ export function bagSeat(at: { x: number; y: number } = BAG_AT): { x: number; y: 
 }
 
 /** Open U. Vertical sides, semicircular bottom. `outset` grows a parallel centerline. */
-function bowl(at: { x: number; y: number }, outset: number): Array<{ x: number; y: number }> {
+function bowl(at: { x: number; y: number }, outset: number, index: number): Array<{ x: number; y: number }> {
   const mouth = bagMouth(at);
-  const half = bagMouthHalf() + outset;
-  const leg = bagLeg();
+  const half = bagMouthHalf(index) + outset;
+  const leg = bagLeg(index);
   const seat = { x: mouth.x, y: mouth.y - leg };
   const left = { x: mouth.x - half, y: mouth.y };
   const right = { x: mouth.x + half, y: mouth.y };
@@ -53,13 +53,13 @@ function bowl(at: { x: number; y: number }, outset: number): Array<{ x: number; 
 }
 
 /** Inner edge. The lip is the mouth. The bottom is wider than the ball. */
-export function bagOuterPoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
-  return bowl(at, 0);
+export function bagOuterPoints(at: { x: number; y: number } = BAG_AT, index = 0): Array<{ x: number; y: number }> {
+  return bowl(at, 0, index);
 }
 
 /** Stroke centerline, one half-width outside the inner edge. */
-export function bagStrokePoints(at: { x: number; y: number } = BAG_AT): Array<{ x: number; y: number }> {
-  return bowl(at, bagStroke() / 2);
+export function bagStrokePoints(at: { x: number; y: number } = BAG_AT, index = 0): Array<{ x: number; y: number }> {
+  return bowl(at, bagStroke() / 2, index);
 }
 
 function pointInBag(px: number, py: number, pts: ReadonlyArray<{ x: number; y: number }>): boolean {
@@ -75,6 +75,7 @@ function pointInBag(px: number, py: number, pts: ReadonlyArray<{ x: number; y: n
 }
 
 /** Ball center is inside the open U. The mouth is the closing edge of the outline. */
-export function ballInBag(x: number, y: number, at: { x: number; y: number } = BAG_AT): boolean {
-  return pointInBag(x, y, bagOuterPoints(at));
+export function ballInBag(x: number, y: number, index = 0): boolean {
+  const at = BAGS[index] ?? BAG_AT;
+  return pointInBag(x, y, bagOuterPoints(at, index));
 }

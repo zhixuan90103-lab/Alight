@@ -4,11 +4,13 @@ import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 import { bagStrokePoints } from './bag';
 import {
   BAGS,
+  BAG_SPEC,
+  BALL_HEX,
   bandWidth,
   BIRD_R,
-  LEVEL_BALLS,
   SHOW_BAG,
   SLINGS,
+  type BallColor,
 } from './tune';
 import type { Sim } from './sim';
 
@@ -21,11 +23,11 @@ function circle(radius: number, color: number, segments = 40): THREE.Mesh {
 }
 
 /** Flat blue field, cyan mechanisms, gold balls, one long shadow down-right. */
-const FIELD = 0x7ea8d3;
+const FIELD = 0x7fa5bf;
 const BAND = 0xffffff;
 const RIVET = 0x777268;
 const GOLD = 0xecbf77;
-const SHADOW = 0x608ab6;
+const SHADOW = 0x5f8096;
 /** Shadow runs down-right. The soft ring is 10% of that length. */
 const SHADOW_X = 14;
 const SHADOW_Y = -14;
@@ -396,6 +398,15 @@ export function createPlayView(scene: THREE.Scene): {
     opacity: 1,
     depthWrite: true,
   });
+  const blueMat = new THREE.MeshBasicMaterial({
+    color: BALL_HEX.blue,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 1,
+    depthWrite: true,
+  });
+  const ballMat: Record<BallColor, THREE.MeshBasicMaterial> = { gold: goldMat, blue: blueMat };
+  const bowlPaint: Record<BallColor, THREE.MeshBasicMaterial> = { gold: bowlMat, blue: blueMat };
   const mountShadow = (geom: THREE.BufferGeometry, cast = 1) => {
     const group = new THREE.Group();
     const len = Math.hypot(SHADOW_X, SHADOW_Y) || 1;
@@ -420,7 +431,7 @@ export function createPlayView(scene: THREE.Scene): {
     return { mesh, group };
   };
 
-  const bagRibbons = BAGS.map(() => {
+  const bagRibbons = [0, 1].map(() => {
     const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
     const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
     const shadow = mountShadow(shadowGeom);
@@ -431,7 +442,7 @@ export function createPlayView(scene: THREE.Scene): {
     return { mesh, shadow };
   });
   const bagEnds: THREE.Mesh[] = [];
-  for (let i = 0; i < BAGS.length * 2; i++) {
+  for (let i = 0; i < bagRibbons.length * 2; i++) {
     const end = circle(1, GOLD, 64);
     end.material = bowlMat;
     end.renderOrder = 3;
@@ -439,7 +450,8 @@ export function createPlayView(scene: THREE.Scene): {
     scene.add(end);
   }
 
-  const arcs = SLINGS.map(() => {
+  const BAND_SLOTS = 2;
+  const arcs = Array.from({ length: BAND_SLOTS }, () => {
     const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
     const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
     const shadow = mountShadow(shadowGeom, NEAR_CAST);
@@ -451,7 +463,7 @@ export function createPlayView(scene: THREE.Scene): {
   });
 
   const bandEnds: THREE.Mesh[] = [];
-  for (let i = 0; i < SLINGS.length * 2; i++) {
+  for (let i = 0; i < BAND_SLOTS * 2; i++) {
     const end = circle(1, BAND, 64);
     end.material = bandMat;
     end.renderOrder = 3;
@@ -459,21 +471,23 @@ export function createPlayView(scene: THREE.Scene): {
     scene.add(end);
   }
   const rivetR = STROKE * 0.34;
-  for (const sling of SLINGS) {
-    for (const rivet of [sling.left, sling.right]) {
+  const rivets: THREE.Mesh[] = [];
+  for (let n = 0; n < BAND_SLOTS; n++) {
+    for (const rivet of [SLINGS[0].left, SLINGS[0].right]) {
       const head = circle(1, RIVET, 64);
       head.material = rivetMat;
       head.renderOrder = 4;
       head.position.set(rivet.x, rivet.y, 0.8);
       head.scale.set(rivetR, rivetR, 1);
       scene.add(head);
+      rivets.push(head);
     }
   }
 
-  const ballShadows = SLINGS.map(() => {
+  const ballShadows = Array.from({ length: BAND_SLOTS }, () => {
     return mountShadow(meshGeom(64, 192), NEAR_CAST);
   });
-  const balls = SLINGS.map(() => {
+  const balls = Array.from({ length: BAND_SLOTS }, () => {
     const body = circle(1, GOLD);
     body.material = goldMat;
     body.renderOrder = 4;
@@ -483,7 +497,7 @@ export function createPlayView(scene: THREE.Scene): {
     scene.add(group);
     return group;
   });
-  const restingBalls = Array.from({ length: LEVEL_BALLS }, () => {
+  const restingBalls = Array.from({ length: 6 }, () => {
     const body = circle(1, GOLD);
     body.material = goldMat;
     body.renderOrder = 4;
@@ -503,9 +517,20 @@ export function createPlayView(scene: THREE.Scene): {
       hum += dt;
       for (let i = 0; i < bagRibbons.length; i++) {
         const bagState = s.bags[i];
-        const here = SHOW_BAG && !bagState.gone;
-        const pts = bagStrokePoints(BAGS[i]);
+        const here = Boolean(bagState) && SHOW_BAG && !bagState.gone;
         const ribbon = bagRibbons[i].mesh;
+        const paint = bowlPaint[BAG_SPEC[i]?.color ?? 'gold'];
+        ribbon.material = paint;
+        bagEnds[i * 2].material = paint;
+        bagEnds[i * 2 + 1].material = paint;
+        if (!here || !BAGS[i]) {
+          ribbon.visible = false;
+          bagRibbons[i].shadow.group.visible = false;
+          bagEnds[i * 2].visible = false;
+          bagEnds[i * 2 + 1].visible = false;
+          continue;
+        }
+        const pts = bagStrokePoints(BAGS[i], i);
         const shadow = bagRibbons[i].shadow;
         ribbon.visible = here;
         shadow.group.visible = here;
@@ -537,6 +562,21 @@ export function createPlayView(scene: THREE.Scene): {
           end.scale.set(endR, endR, 1);
         }
       }
+      for (let i = 0; i < rivets.length; i++) {
+        const sling = SLINGS[Math.floor(i / 2)];
+        const side = sling ? (i % 2 === 0 ? sling.left : sling.right) : null;
+        rivets[i].visible = Boolean(side);
+        if (side) rivets[i].position.set(side.x, side.y, 0.8);
+      }
+      for (let i = 0; i < balls.length; i++) {
+        if (i < s.shots.length) continue;
+        arcs[i].mesh.visible = false;
+        arcs[i].shadow.group.visible = false;
+        balls[i].visible = false;
+        ballShadows[i].group.visible = false;
+        bandEnds[i * 2].visible = false;
+        bandEnds[i * 2 + 1].visible = false;
+      }
       for (let i = 0; i < s.shots.length; i++) {
         const shot = s.shots[i];
         const atMax = shot.phase === 'pulling' && shot.strain >= 0.995;
@@ -548,6 +588,8 @@ export function createPlayView(scene: THREE.Scene): {
         const shown = shot.phase !== 'gone';
         ball.position.set(bx, by, 1);
         ball.visible = shown;
+        const body = ball.children[0] as THREE.Mesh;
+        body.material = ballMat[shot.color];
         ball.scale.set(BIRD_R * shot.scale, BIRD_R * shot.scale, 1);
         ballShadow.group.visible = shown;
         const ballGeom = ballShadow.mesh.geometry;
@@ -562,6 +604,8 @@ export function createPlayView(scene: THREE.Scene): {
         ballIndex.needsUpdate = true;
         const points = amp === 0 ? shot.band : humAlongForce(shot.band, shot.birdX, shot.birdY, shot.aimX, shot.aimY, amp);
         const arc = arcs[i];
+        arc.mesh.visible = true;
+        arc.shadow.group.visible = true;
         const geom = arc.mesh.geometry;
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
         const index = geom.getIndex() as THREE.BufferAttribute;
@@ -589,6 +633,7 @@ export function createPlayView(scene: THREE.Scene): {
         const tips = [points[0], points[points.length - 1]];
         for (let k = 0; k < 2; k++) {
           const end = bandEnds[i * 2 + k];
+          end.visible = true;
           end.position.set(tips[k].x, tips[k].y, 0.5);
           end.scale.set(cap, cap, 1);
         }
@@ -603,6 +648,7 @@ export function createPlayView(scene: THREE.Scene): {
         mark.shadow.group.visible = Boolean(held);
         if (!held) continue;
         mark.body.position.set(held.x, held.y, 1);
+        mark.body.material = ballMat[held.color];
         mark.body.scale.set(BIRD_R, BIRD_R, 1);
         const geom = mark.shadow.mesh.geometry;
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
