@@ -2,9 +2,9 @@
 
 配套：[AGENTS.md](../AGENTS.md) · [ENGINEERING.md](./ENGINEERING.md) · [AUDIO.md](./AUDIO.md)
 
-> 本壳 **已经带原生插件 + JS 薄封装**，但只验通路，不是玩法层。  
+> 本文件只写插件怎么接到真机。这一关什么时候震、震多少，以 [IMPLEMENTATION.md](./IMPLEMENTATION.md) 第 11 节为准。  
 > 以前多次「没接上」，几乎都是 **只 sync、没 bootstrap**，或 **用 `prepare()` 当验收**。  
-> 正确接入按 **§0** 做；后面是差异、API、排错。
+> 正确接入按 **§0** 做；后面是差异、API、排错。真机验收是拉开球有持续震动，不是页面上的测试按钮。
 
 ## 0. 正确接入（照这个做）
 

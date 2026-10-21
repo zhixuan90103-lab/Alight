@@ -44,7 +44,7 @@
 4. **布局坐标 390×844**；禁止 `renderer.setSize(window.innerWidth,…)`  
 5. **UI 只挂 `#ui-root`**；禁止玩法 UI `position: fixed` 贴浏览器窗  
 6. **Pad 只改外层视口**，不改 `DESIGN_*`  
-7. **改 Swift 改 `plugins/native-haptics/`** 再 `ios:bootstrap`；震动接线见 `docs/HAPTICS.md`。Capacitor 8 的 `SceneDelegate` 必须 `rootViewController = BridgeViewController()`（默认 `CAPBridgeViewController` 不会注册插件）。不要用 JS `prepare()` 判断是否接上；真机 HUD 看 `plugin: true` + 点「点我震动」。  
+7. **改 Swift 改 `plugins/native-haptics/`** 再 `ios:bootstrap`；插件注册见 `docs/HAPTICS.md`，这一关的震动见 `docs/IMPLEMENTATION.md` 第 11 节。Capacitor 8 的 `SceneDelegate` 必须 `rootViewController = BridgeViewController()`（默认 `CAPBridgeViewController` 不会注册插件）。不要用 JS `prepare()` 判断是否接上。  
 8. **无 WebGPU 则明确失败**，不静默 WebGL  
 
 ## 命令
@@ -63,13 +63,13 @@ npm run ios
 
 ## 业务怎么加
 
-- 玩法：按 `docs/GAME-RULES.md` 与 `docs/IMPLEMENTATION.md`，改 `src/main.ts` 或 `src/game/*`。操作优先是高优先级：只有规则结算能禁止这一颗球的操作，其他动画都允许玩家打断（`GAME-RULES.md` 第 0 节）  
+- 玩法：按 `docs/GAME-RULES.md` 与 `docs/IMPLEMENTATION.md`，改 `src/main.ts` 或 `src/game/*`。操作优先见 `GAME-RULES.md` 第 0 节：有球的皮筋可以拉，飞行中的空托不能拉，皮筋上的收回和回弹可以打断  
 - 保留：adapt / create-renderer / haptics / plugins / `base`  
 - 触控：`clientToDesign` + 忽略 letterbox 外  
 - 音效：按 `docs/AUDIO.md` 接入；禁止热路径 `new Audio()` / 每发一次桥  
 
 ## 刻意不做
 
-- 具体游戏玩法（demo 立方体可删）  
 - Android（可后加）  
 - WebGL 静默回退  
+- 第一关以外的队列、错色、错尺寸、音效（见 `docs/GAME-RULES.md` 第 9 节和 `docs/IMPLEMENTATION.md` 第 9 节）  

@@ -18,10 +18,10 @@ index.html
   → main.ts
        → applyNativeClass / safeArea
        → createRenderer(#stage)
-       → demo scene
+       → Sim + View + HUD
        → mountDevicePreview → computeStageLayout → applyStageTransform
        → watchStageLayout
-       → haptics + HUD buttons
+       → 手指拉球；震动见 IMPLEMENTATION.md 第 11 节
 ```
 
 ## 3. DOM
@@ -50,10 +50,10 @@ Xcode Run 真机
   → capacitorDidLoad → registerPluginInstance(AdvancedHapticsPlugin)
   → load App/public (= dist)
   → 同上 Web 链
-  → HUD「点我震动」→ haptics.impact('medium')
+  → 拉开球 → 持续震动（IMPLEMENTATION.md 第 11 节）
 ```
 
-HUD 状态行有 `plugin: true/false`。`false` = 仍在默认 `CAPBridgeViewController`，插件未进 JS `PluginHeaders`。
+`false` 或拉开没有持续震动：仍在默认 `CAPBridgeViewController`，插件未进 JS `PluginHeaders`。先 `ios:bootstrap`。
 
 ## 5. 改配置找谁
 

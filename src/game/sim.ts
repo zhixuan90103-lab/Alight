@@ -29,7 +29,7 @@ import {
 
 export type Phase = 'ready' | 'pulling' | 'launching' | 'flying' | 'catching' | 'settling' | 'asleep' | 'returning' | 'emerging' | 'gone';
 
-export type Feel = 'pull' | 'slip' | 'launch' | 'catch' | 'asleep' | 'miss' | 'gone' | 'knock';
+export type Feel = 'pull' | 'slip' | 'launch' | 'catch' | 'bowl' | 'miss' | 'knock';
 
 export type ShotSample = {
   phase: Phase;
@@ -113,6 +113,8 @@ const OPEN_DELAY = 0.45;
 export class Sim {
   readonly world: RAPIER.World;
   private bagColliders: RAPIER.Collider[] = [];
+  private readonly bagHandles = new Set<number>();
+  private readonly events = new RAPIER.EventQueue(false);
   private readonly shots: Shot[];
   private readonly gone: boolean[];
   private accumulator = 0;
@@ -144,7 +146,7 @@ export class Sim {
         .setCcdEnabled(true),
     );
     const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS),
+      RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       bird,
     );
     applyBall(bird, collider, ballMaterial());
@@ -206,6 +208,7 @@ export class Sim {
   private syncBags(): void {
     for (const collider of this.bagColliders) this.world.removeCollider(collider, true);
     this.bagColliders = [];
+    this.bagHandles.clear();
     if (!SHOW_BAG) return;
     for (const at of BAGS) {
       const pts = bagOuterPoints(at);
@@ -216,7 +219,10 @@ export class Sim {
       }
       const desc = RAPIER.ColliderDesc.polyline(vertices);
       applyFixture(desc, woodMaterial());
-      this.bagColliders.push(this.world.createCollider(desc));
+      const collider = this.world.createCollider(desc);
+      collider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+      this.bagHandles.add(collider.handle);
+      this.bagColliders.push(collider);
     }
   }
 
@@ -680,7 +686,12 @@ export class Sim {
       else if (shot.refill >= 0) this.stepRefill(shot);
       else if (shot.phase !== 'pulling' && shot.phase !== 'settling' && !this.bandHeld(this.shots.indexOf(shot))) shot.band.step(STEP);
     }
-    this.world.step();
+    this.world.step(this.events);
+    this.events.drainCollisionEvents((a, b, started) => {
+      if (!started) return;
+      const hitBag = this.bagHandles.has(a) || this.bagHandles.has(b);
+      if (hitBag) this.feel.push('bowl');
+    });
     const flying = this.shots.find((shot) => shot.phase === 'flying');
     this.camera.step(flying ? flying.bird.translation().y : null, STEP);
     for (const shot of this.shots) {
@@ -690,7 +701,6 @@ export class Sim {
 
   /** The ball fell through the bottom of the current view. The next one waits the same delay. */
   private die(shot: Shot): void {
-    this.feel.push('gone');
     shot.phase = 'gone';
     shot.refill = this.stock > 0 ? REFILL_DELAY : -1;
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
@@ -715,7 +725,6 @@ export class Sim {
   /** The flying ball has rested inside the U. It stays. The pipe may issue another. */
   private arrive(shot: Shot): void {
     this.parked.push({ bird: shot.bird, collider: shot.collider });
-    this.feel.push('asleep');
     if (!this.issue(shot)) shot.phase = 'gone';
   }
 
@@ -728,7 +737,10 @@ export class Sim {
       const bird = this.world.createRigidBody(
         RAPIER.RigidBodyDesc.dynamic().setTranslation(EXIT.x, EXIT.y).setCcdEnabled(true),
       );
-      const collider = this.world.createCollider(RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS), bird);
+      const collider = this.world.createCollider(
+        RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+        bird,
+      );
       applyBall(bird, collider, ballMaterial());
       shot.bird = bird;
       shot.collider = collider;

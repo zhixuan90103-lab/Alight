@@ -4,7 +4,7 @@
 
 ## 1. 定位
 
-可复制的 **竖屏 WebGPU 手游底座**：能 dev、能 build、能真机、能震动、桌面≈手机/Pad。不含具体玩法（demo 可删）。
+可复制的 **竖屏 WebGPU 手游底座**：能 dev、能 build、能真机、能震动、桌面≈手机/Pad。当前玩法是 Alight 第一关，规则在 [GAME-RULES.md](./GAME-RULES.md)，数量和震动在 [IMPLEMENTATION.md](./IMPLEMENTATION.md)。
 
 ## 2. 目录
 
@@ -48,7 +48,7 @@ portrait-webgpu-base/
 | `webDir` | `dist` |
 | `ios.contentInset` | `never` |
 | `ios.scrollEnabled` | `false` |
-| `ios.backgroundColor` | `#0b1020` |
+| `ios.backgroundColor` | `#7ea8d3` |
 
 ### 设计尺寸
 

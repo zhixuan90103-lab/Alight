@@ -25,6 +25,7 @@ import { designToWorld } from './game/frame';
 import { Sim } from './game/sim';
 import { mountHud, starsFor } from './game/hud';
 import { createPlayView } from './game/view';
+import { beginCharge, endCharge, updateCharge } from './game/pullHaptics';
 import { haptics } from './utils/haptics';
 
 const shell = document.getElementById('shell')!;
@@ -40,10 +41,13 @@ async function boot(): Promise<void> {
   const uiRoot = document.getElementById('ui-root');
   let pointerId: number | null = null;
   let resultShown = false;
+  /** Seconds left before the result card. Negative means the level is not finished. */
+  let resultWait = -1;
   const hud = uiRoot
     ? mountHud(uiRoot, sim, () => {
         pointerId = null;
         resultShown = false;
+        resultWait = -1;
         hud?.hideResult();
         sim.cancelPull();
         sim.restart();
@@ -120,20 +124,31 @@ async function boot(): Promise<void> {
     sim.advance(dt);
     if (hud && !resultShown) {
       const outcome = sim.result();
-      if (outcome) {
-        resultShown = true;
-        pointerId = null;
-        sim.cancelPull();
-        hud.showResult(starsFor(outcome.inBag));
+      if (!outcome) resultWait = -1;
+      else if (resultWait < 0) resultWait = 1;
+      else {
+        resultWait -= dt;
+        if (resultWait <= 0) {
+          resultShown = true;
+          pointerId = null;
+          sim.cancelPull();
+          hud.showResult(starsFor(outcome.inBag));
+        }
       }
     }
     for (const cue of sim.takeFeel()) {
-      if (cue === 'pull' || cue === 'catch' || cue === 'knock') void haptics.impact('light');
+      if (cue === 'pull') {
+        const pulling = sim.sample().shots.find((shot) => shot.phase === 'pulling');
+        beginCharge(pulling?.strain ?? 0);
+      }
+      if (cue === 'catch' || cue === 'knock' || cue === 'bowl') void haptics.impact('light');
       if (cue === 'launch') void haptics.impact('medium');
-      if (cue === 'asleep') void haptics.impact('heavy');
-      if (cue === 'slip' || cue === 'miss' || cue === 'gone') void haptics.impact('rigid');
+      if (cue === 'slip' || cue === 'miss') void haptics.impact('rigid');
     }
     const snap = sim.sample();
+    const pulling = snap.shots.find((shot) => shot.phase === 'pulling');
+    if (pulling) updateCharge(pulling.strain);
+    else endCharge();
     hud?.sync(snap);
     view.sync(sim, dt);
     renderer.render(scene, view.camera);

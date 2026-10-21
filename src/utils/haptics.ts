@@ -42,6 +42,9 @@ type AdvancedHapticsPlugin = {
     sharpness: number;
     duration?: number;
   }): Promise<void>;
+  updateContinuousHaptic(opts: { intensity: number; sharpness: number }): Promise<void>;
+  startGrainHaptic(opts?: { intensity?: number; sharpness?: number; frequency?: number }): Promise<void>;
+  stopGrainHaptic(): Promise<void>;
   stopContinuousHaptic(): Promise<void>;
   setKeepAwake(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
   prepare?(): Promise<{ supported?: boolean; fallback?: boolean }>;
@@ -207,6 +210,41 @@ export const haptics = {
         duration: opts.duration,
       }),
     );
+  },
+
+  async updateContinuous(
+    intensity: number,
+    sharpness: number,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    if (!enabled) return { ok: false, reason: 'disabled' };
+    if (!pluginReady()) return { ok: false, reason: 'not_native_ios' };
+    return safely(() =>
+      AdvancedHaptics.updateContinuousHaptic({
+        intensity: clamp01(intensity),
+        sharpness: clamp01(sharpness),
+      }),
+    );
+  },
+
+  async startGrain(opts?: {
+    intensity?: number;
+    sharpness?: number;
+    frequency?: number;
+  }): Promise<{ ok: boolean; reason?: string }> {
+    if (!enabled) return { ok: false, reason: 'disabled' };
+    if (!pluginReady()) return { ok: false, reason: 'not_native_ios' };
+    return safely(() =>
+      AdvancedHaptics.startGrainHaptic({
+        intensity: opts?.intensity === undefined ? undefined : clamp01(opts.intensity),
+        sharpness: opts?.sharpness === undefined ? undefined : clamp01(opts.sharpness),
+        frequency: opts?.frequency,
+      }),
+    );
+  },
+
+  async stopGrain(): Promise<{ ok: boolean; reason?: string }> {
+    if (!pluginReady()) return { ok: false, reason: 'not_native_ios' };
+    return safely(() => AdvancedHaptics.stopGrainHaptic());
   },
 
   async stopContinuous(): Promise<{ ok: boolean; reason?: string }> {
