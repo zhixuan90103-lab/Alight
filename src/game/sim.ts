@@ -380,7 +380,7 @@ export class Sim {
     if (y > slip) {
       const here = shot.bird.translation();
       if (here.y >= slip - 0.5) {
-        this.slipOff(shot, here.x, Math.min(here.y, slip));
+        this.letGo(shot, here.x, Math.min(here.y, slip), shot.band, true);
         return;
       }
       y = slip;
@@ -394,31 +394,22 @@ export class Sim {
     else shot.band.holdTaut(x, y);
   }
 
-  /** The rebound rose past the same line as an upward drag. Drop it and let the empty band catch it. */
-  private releaseCatch(shot: Shot, x: number, y: number): void {
-    const host = shot.catchOn >= 0 ? this.shots[shot.catchOn] : shot;
+  /**
+   * The ball crossed the shared let-go line.
+   * A finger drag reports slip. A catch rebound does not.
+   */
+  private letGo(shot: Shot, x: number, y: number, band: Band, finger: boolean): void {
     shot.bird.setTranslation({ x, y }, true);
     shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
     shot.bird.setGravityScale(1, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
-    host.band.holdAtRest();
+    band.holdAtRest();
     shot.prevX = x;
     shot.prevY = y;
     shot.bandTouch = SLINGS.map(() => false);
     shot.catchOn = -1;
     shot.phase = 'flying';
-  }
-
-  private slipOff(shot: Shot, x: number, y: number): void {
-    shot.bird.setTranslation({ x, y }, true);
-    shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-    shot.bird.setGravityScale(1, true);
-    shot.bird.setLinvel({ x: 0, y: 0 }, true);
-    shot.band.holdAtRest();
-    shot.prevX = x;
-    shot.prevY = y;
-    shot.bandTouch = SLINGS.map(() => false);
-    shot.phase = 'flying';
+    if (!finger) return;
     if (this.active !== null && this.shots[this.active] === shot) this.active = null;
     this.feel.push('slip');
   }
@@ -507,7 +498,7 @@ export class Sim {
     const sling = this.shots[shot.catchOn].sling;
     const slip = slipBallY(x, sling);
     if (y > slip) {
-      this.releaseCatch(shot, x, slip);
+      this.letGo(shot, x, slip, this.shots[shot.catchOn].band, false);
       return;
     }
     shot.bird.setNextKinematicTranslation({ x, y });

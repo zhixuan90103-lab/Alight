@@ -23,8 +23,8 @@ import { applyNativeClass, applySafeAreaCssVars, readSafeAreaInsets } from './ad
 import { createRenderer, resizeToDesign } from './create-renderer';
 import { designToWorld } from './game/frame';
 import { Sim } from './game/sim';
-import { BAG_Y, BIRD_R, LANE_X, LEVEL_BALLS, SHOW_BAG } from './game/tune';
-import { hudIcon, mountTunePanel } from './game/tunePanel';
+import { mountHud } from './game/hud';
+import { BAG_Y, BIRD_R, LANE_X, SHOW_BAG } from './game/tune';
 import { createPlayView } from './game/view';
 import { haptics } from './utils/haptics';
 
@@ -48,42 +48,16 @@ async function boot(): Promise<void> {
     uiRoot?.append(el);
     return el;
   });
+  let pointerId: number | null = null;
   if (uiRoot) {
-    const hud = document.createElement('div');
-    hud.id = 'hud';
-    const level = document.createElement('div');
-    level.id = 'level-id';
-    level.textContent = '1';
-    level.setAttribute('aria-label', '关卡 1');
-    const balls = document.createElement('div');
-    balls.id = 'balls';
-    balls.setAttribute('aria-label', `本关 ${LEVEL_BALLS} 颗球`);
-    for (let i = 0; i < LEVEL_BALLS; i++) {
-      const dot = document.createElement('span');
-      dot.className = 'ball-pip is-full';
-      balls.append(dot);
-    }
-    const actions = document.createElement('div');
-    actions.id = 'hud-actions';
-    const replay = document.createElement('button');
-    replay.type = 'button';
-    replay.className = 'hud-pill';
-    replay.setAttribute('aria-label', '重玩');
-    replay.innerHTML = hudIcon('replay');
-    replay.addEventListener('click', () => {
+    mountHud(uiRoot, sim, () => {
       pointerId = null;
       sim.cancelPull();
       sim.restart();
     });
-    hud.append(level, balls, actions);
-    uiRoot.prepend(hud);
-    mountTunePanel(uiRoot, actions, sim);
-    actions.append(replay);
-    hud.addEventListener('pointerdown', (event) => event.stopPropagation());
   }
 
   let preview: DevicePreviewController;
-  let pointerId: number | null = null;
 
   const onLayout = (layout: StageLayout) => {
     applyStageTransform(stage, layout);

@@ -74,6 +74,15 @@ function sweepThrough(left: number, right: number, target: number): { start: num
   return { start: left, span: span - Math.PI * 2 };
 }
 
+/** Cup points below the horizon. Those poses keep both tangents on the lower half. */
+function facesDown(cup: number): boolean {
+  return Math.sin(cup) < -0.2;
+}
+
+function onCrown(angle: number): boolean {
+  return Math.sin(angle) > 0.05;
+}
+
 /** Real tangents, arc centered on the cup. Lines touch the ball instead of cutting through it. */
 function tangentCup(
   ballX: number,
@@ -87,11 +96,10 @@ function tangentCup(
   if (!lefts || !rights) return null;
   let best: Array<{ x: number; y: number }> | null = null;
   let bestD = Infinity;
-  // A downward cup stays on the lower half. An upper tangent is the crown hook.
-  const lowerOnly = Math.sin(cup) < -0.2;
+  const lowerOnly = facesDown(cup);
   for (const left of lefts) {
     for (const right of rights) {
-      if (lowerOnly && (Math.sin(left.angle) > 0.05 || Math.sin(right.angle) > 0.05)) continue;
+      if (lowerOnly && (onCrown(left.angle) || onCrown(right.angle))) continue;
       if (lineHitsBall(sling.left.x, sling.left.y, left.x, left.y, ballX, ballY, seat)) continue;
       if (lineHitsBall(sling.right.x, sling.right.y, right.x, right.y, ballX, ballY, seat)) continue;
       if (linesCross(sling.left.x, sling.left.y, left.x, left.y, sling.right.x, sling.right.y, right.x, right.y)) continue;
@@ -202,9 +210,9 @@ function attach(
   if (!pair) return null;
   let best: { x: number; y: number; angle: number } | null = null;
   let bestD = Infinity;
-  const lowerOnly = Math.sin(cup) < -0.2;
+  const lowerOnly = facesDown(cup);
   for (const hit of pair) {
-    if (lowerOnly && Math.sin(hit.angle) > 0.05) continue;
+    if (lowerOnly && onCrown(hit.angle)) continue;
     if (lineHitsBall(anchorX, anchorY, hit.x, hit.y, ballX, ballY, seat)) continue;
     const d = angDist(hit.angle, cup);
     if (d < bestD) {
