@@ -57,6 +57,8 @@ export type SimSample = {
   look: { x: number; y: number };
   /** Balls that reached the U and stayed there. */
   resting: Array<{ x: number; y: number }>;
+  /** Balls that have already left the exit. The HUD turns that many pips into rings, from the left. */
+  issued: number;
 };
 
 type Shot = {
@@ -101,9 +103,11 @@ function len(x: number, y: number): number {
 const ANIMATION: ReadonlySet<Phase> = new Set(['launching', 'flying', 'catching', 'returning']);
 /** Same wait after a death and after the ball is in the bowl for good. */
 const REFILL_DELAY = 0.5;
+/** Opening beat: five solid pips, empty band, then the first ball drops. */
+const OPEN_DELAY = 0.45;
 
 /**
- * Level 1: one ball on the right band, one U on the left. The bag holds as many as the shape allows.
+ * Level 1: an empty right band, then five balls from the exit, and one U on the left.
  * A sling with a ball can be pulled while another ball is in the air.
  */
 export class Sim {
@@ -119,8 +123,10 @@ export class Sim {
   private readonly camera = createFramingCamera();
   /** Balls already placed in the bowl. Their bodies stay in the world. */
   private readonly parked: Array<{ bird: RAPIER.RigidBody; collider: RAPIER.Collider }> = [];
-  /** Balls still inside the pipe. The one on the band is already counted out. */
-  private stock = Math.max(0, LEVEL_BALLS - SLINGS.length);
+  /** Balls still waiting to drop from the exit. */
+  private stock = LEVEL_BALLS;
+  /** Balls already dropped from the exit. Each one is an empty pip, from the left. */
+  private issued = 0;
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
@@ -128,6 +134,7 @@ export class Sim {
     this.syncBags();
     this.gone = BAGS.map(() => false);
     this.shots = SLINGS.map((sling) => this.makeShot(sling));
+    for (const shot of this.shots) this.armEmpty(shot, OPEN_DELAY);
   }
 
   private makeShot(sling: Sling): Shot {
@@ -166,6 +173,20 @@ export class Sim {
     };
   }
 
+  /** No ball on the band. The next one drops from the exit after `wait` seconds. */
+  private armEmpty(shot: Shot, wait: number): void {
+    shot.phase = 'gone';
+    shot.refill = wait;
+    shot.drawn = 0;
+    shot.returnIn = 0;
+    shot.bandTouch = SLINGS.map(() => false);
+    shot.collider.setEnabled(false);
+    shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    shot.bird.setGravityScale(0, true);
+    shot.bird.setLinvel({ x: 0, y: 0 }, true);
+    shot.band.holdAtRest();
+  }
+
   applyTune(): void {
     this.world.gravity = { x: 0, y: -GRAVITY };
     for (const shot of this.shots) {
@@ -199,27 +220,36 @@ export class Sim {
     }
   }
 
-  /** Put level 1 back to the first ball on the band. Balls already in the bowl are removed. */
+  /** Put level 1 back to an empty band. The first ball drops again after the opening beat. */
   restart(): void {
     for (const ball of this.parked) {
       if (!this.shots.some((shot) => shot.bird === ball.bird)) this.world.removeRigidBody(ball.bird);
     }
     this.parked.length = 0;
-    this.stock = Math.max(0, LEVEL_BALLS - SLINGS.length);
+    this.stock = LEVEL_BALLS;
+    this.issued = 0;
     this.accumulator = 0;
     this.active = null;
     this.knocks.clear();
     this.feel = [];
     this.camera.reset();
     this.gone.fill(false);
-    for (const shot of this.shots) {
-      shot.refill = -1;
-      shot.drawn = 0;
-      shot.returnIn = 0;
-      shot.bandTouch = SLINGS.map(() => false);
-      shot.bird.setGravityScale(0, true);
-      this.restOnPouch(shot);
+    for (const shot of this.shots) this.armEmpty(shot, OPEN_DELAY);
+  }
+
+  /**
+   * Set once every ball has left play: parked in the U, or gone below the view.
+   * `inBag` is how many of those balls are still inside the U.
+   */
+  result(): { inBag: number } | null {
+    if (this.stock > 0) return null;
+    if (this.shots.some((shot) => shot.phase !== 'gone' || shot.refill >= 0)) return null;
+    let inBag = 0;
+    for (const ball of this.parked) {
+      const p = ball.bird.translation();
+      if (BAGS.some((bag) => ballInBag(p.x, p.y, bag))) inBag += 1;
     }
+    return { inBag };
   }
 
   static async create(): Promise<Sim> {
@@ -254,6 +284,7 @@ export class Sim {
         const p = ball.bird.translation();
         return { x: p.x, y: p.y };
       }),
+      issued: this.issued,
     };
   }
 
@@ -692,6 +723,7 @@ export class Sim {
   private issue(shot: Shot): boolean {
     if (this.stock <= 0) return false;
     this.stock -= 1;
+    this.issued += 1;
     if (this.parked.some((ball) => ball.bird === shot.bird)) {
       const bird = this.world.createRigidBody(
         RAPIER.RigidBodyDesc.dynamic().setTranslation(EXIT.x, EXIT.y).setCcdEnabled(true),

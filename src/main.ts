@@ -23,8 +23,7 @@ import { applyNativeClass, applySafeAreaCssVars, readSafeAreaInsets } from './ad
 import { createRenderer, resizeToDesign } from './create-renderer';
 import { designToWorld } from './game/frame';
 import { Sim } from './game/sim';
-import { mountHud } from './game/hud';
-import { BAG_Y, BIRD_R, LANE_X, SHOW_BAG } from './game/tune';
+import { mountHud, starsFor } from './game/hud';
 import { createPlayView } from './game/view';
 import { haptics } from './utils/haptics';
 
@@ -39,23 +38,17 @@ async function boot(): Promise<void> {
   const sim = await Sim.create();
   const view = createPlayView(scene);
   const uiRoot = document.getElementById('ui-root');
-  const bagCounts = LANE_X.map((x, i) => {
-    const el = document.createElement('div');
-    el.className = 'bag-count';
-    el.style.left = `${x}px`;
-    el.style.top = `${BAG_Y[i] - BIRD_R - 22}px`;
-    el.textContent = '0';
-    uiRoot?.append(el);
-    return el;
-  });
   let pointerId: number | null = null;
-  if (uiRoot) {
-    mountHud(uiRoot, sim, () => {
-      pointerId = null;
-      sim.cancelPull();
-      sim.restart();
-    });
-  }
+  let resultShown = false;
+  const hud = uiRoot
+    ? mountHud(uiRoot, sim, () => {
+        pointerId = null;
+        resultShown = false;
+        hud?.hideResult();
+        sim.cancelPull();
+        sim.restart();
+      })
+    : null;
 
   let preview: DevicePreviewController;
 
@@ -88,7 +81,7 @@ async function boot(): Promise<void> {
     return { x: world.x + view.look.x, y: world.y + view.look.y };
   };
 
-  const onTune = (event: Event) => (event.target as HTMLElement | null)?.closest?.('#tune, #hud');
+  const onTune = (event: Event) => (event.target as HTMLElement | null)?.closest?.('#tune, #hud, #result');
 
   window.addEventListener('pointerdown', (event) => {
     if (onTune(event)) return;
@@ -125,20 +118,23 @@ async function boot(): Promise<void> {
     const dt = Math.min((now - last) / 1000, 0.25);
     last = now;
     sim.advance(dt);
+    if (hud && !resultShown) {
+      const outcome = sim.result();
+      if (outcome) {
+        resultShown = true;
+        pointerId = null;
+        sim.cancelPull();
+        hud.showResult(starsFor(outcome.inBag));
+      }
+    }
     for (const cue of sim.takeFeel()) {
       if (cue === 'pull' || cue === 'catch' || cue === 'knock') void haptics.impact('light');
       if (cue === 'launch') void haptics.impact('medium');
       if (cue === 'asleep') void haptics.impact('heavy');
       if (cue === 'slip' || cue === 'miss' || cue === 'gone') void haptics.impact('rigid');
     }
-    const bags = sim.sample().bags;
-    for (let i = 0; i < bagCounts.length; i++) {
-      const el = bagCounts[i];
-      const here = SHOW_BAG && !bags[i].gone;
-      el.style.display = here ? 'block' : 'none';
-      const text = String(bags[i].count);
-      if (el.textContent !== text) el.textContent = text;
-    }
+    const snap = sim.sample();
+    hud?.sync(snap);
     view.sync(sim, dt);
     renderer.render(scene, view.camera);
   });

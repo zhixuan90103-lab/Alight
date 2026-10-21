@@ -52,13 +52,23 @@ function format(value: number, step: number): string {
   return value.toFixed(digits);
 }
 
-export function hudIcon(kind: 'tune' | 'replay'): string {
+/** Same marks as SlidetoWord: a gear character and a replay arrow character. */
+export function hudGlyph(kind: 'settings' | 'replay'): HTMLElement {
+  const el = document.createElement('span');
+  el.className = 'hud-glyph';
+  el.setAttribute('aria-hidden', 'true');
+  el.textContent = kind === 'settings' ? '\u2699\uFE0E' : '\u21BB';
+  return el;
+}
+
+export function hudIcon(kind: 'next' | 'star'): string {
   const mark =
-    kind === 'tune'
-      ? '<path d="M4 7h10M4 12h16M4 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="12" r="2.2"/><circle cx="16" cy="17" r="2.2"/>'
-      : '<path d="M12 6V3L7 8l5 5V10a5 5 0 1 1-4.3 2.5"/>';
-  return `<svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
-    <g class="hud-icon-shade" transform="translate(1.4 1.8)">${mark}</g>
+    kind === 'next'
+      ? '<path d="M5 12h12M13 6l6 6-6 6"/>'
+      : '<path d="M12 3.2l2.4 5.2 5.6.6-4.2 3.8 1.2 5.5L12 15.6 6.9 18.3l1.2-5.5L4 9l5.6-.6z"/>';
+  const paint = kind === 'star' ? '' : 'fill="none"';
+  return `<svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true" ${paint}>
+    <g class="hud-icon-shade" transform="translate(1.2 1.4)">${mark}</g>
     <g class="hud-icon-face">${mark}</g>
   </svg>`;
 }
@@ -67,9 +77,9 @@ export function hudIcon(kind: 'tune' | 'replay'): string {
 export function mountTunePanel(uiRoot: HTMLElement, actions: HTMLElement, sim: Sim): void {
   const head = document.createElement('button');
   head.type = 'button';
-  head.className = 'hud-pill';
+  head.className = 'hud-icon-btn';
   head.setAttribute('aria-label', '设置');
-  head.innerHTML = hudIcon('tune');
+  head.append(hudGlyph('settings'));
   actions.append(head);
 
   const root = document.createElement('section');
