@@ -1,6 +1,10 @@
 import type { Sim } from './sim';
 import {
+  BAG_FRICTION,
   BAG_RESTITUTION,
+  BALL_DAMPING,
+  BALL_FRICTION,
+  BALL_RESTITUTION,
   BAND_PULL_THIN,
   BAND_ZETA,
   BIRD_R,
@@ -31,10 +35,14 @@ const ROWS: Row[] = [
   { key: 'stiffness', label: '劲度', min: 10, max: 160, step: 1, value: STIFFNESS },
   { key: 'zeta', label: '阻尼', min: 0.05, max: 1.2, step: 0.05, value: BAND_ZETA },
   { key: 'bagRestitution', label: '口袋弹性', min: 0, max: 1, step: 0.05, value: BAG_RESTITUTION },
+  { key: 'bagFriction', label: '口袋摩擦', min: 0, max: 2, step: 0.05, value: BAG_FRICTION },
   { key: 'maxPull', label: '最大拉动', min: 40, max: 240, step: 1, value: MAX_PULL },
   { key: 'slipLift', label: '向上脱手', min: 0, max: 80, step: 1, value: SLIP_LIFT },
   { key: 'deadPull', label: '死区', min: 0, max: 80, step: 1, value: DEAD_PULL },
   { key: 'birdR', label: '球半径', min: 14, max: 40, step: 1, value: BIRD_R },
+  { key: 'ballRestitution', label: '球弹性', min: 0, max: 1, step: 0.05, value: BALL_RESTITUTION },
+  { key: 'ballFriction', label: '球摩擦', min: 0, max: 2, step: 0.05, value: BALL_FRICTION },
+  { key: 'ballDamping', label: '球阻尼', min: 0, max: 2, step: 0.05, value: BALL_DAMPING },
   { key: 'ropeThickness', label: '皮筋粗细', min: 2, max: 16, step: 0.5, value: ROPE_THICKNESS },
   { key: 'pullThin', label: '拉满变细', min: 0, max: 0.7, step: 0.02, value: BAND_PULL_THIN },
 ];

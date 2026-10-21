@@ -1,14 +1,15 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { bagOuterPoints, ballInBag, clearCloth, type Cloth } from './bag';
+import { bagOuterPoints, ballInBag } from './bag';
 import { Band } from './band';
+import { applyBall, applyFixture } from './material';
 import {
   BAGS,
-  BAG_RESTITUTION,
+  ballMaterial,
+  woodMaterial,
   BAND_ZETA,
   BIRD_R,
   DEAD_PULL,
   GRAVITY,
-  GROUND_Y,
   MASS,
   MAX_CATCHUP,
   MAX_PULL,
@@ -25,7 +26,7 @@ import {
 
 export type Phase = 'ready' | 'pulling' | 'launching' | 'flying' | 'catching' | 'settling' | 'asleep' | 'returning' | 'gone';
 
-export type Feel = 'pull' | 'slip' | 'launch' | 'catch' | 'asleep' | 'miss' | 'gone' | 'give' | 'knock';
+export type Feel = 'pull' | 'slip' | 'launch' | 'catch' | 'asleep' | 'miss' | 'gone' | 'knock';
 
 export type ShotSample = {
   phase: Phase;
@@ -38,12 +39,10 @@ export type ShotSample = {
 };
 
 export type BagSample = {
-  sealed: boolean;
-  /** Ball has settled. The bag and the ball leave the playfield. */
+  /** Ball centers currently inside this U. Not a rule cap. */
+  count: number;
+  /** Reserved. Nothing in this level sets it. Hides the label and the stroke. */
   gone: boolean;
-  give: number;
-  pressX: number;
-  pressY: number;
 };
 
 export type SimSample = {
@@ -58,9 +57,6 @@ type Shot = {
   collider: RAPIER.Collider;
   band: Band;
   phase: Phase;
-  cloth: Cloth;
-  /** Bag this shot is pushing or settling into. -1 when none. */
-  bag: number;
   prevX: number;
   prevY: number;
   /** Which bands this ball was already touching. A catch needs a new contact. */
@@ -93,12 +89,11 @@ function len(x: number, y: number): number {
 const ANIMATION: ReadonlySet<Phase> = new Set(['launching', 'flying', 'catching', 'returning']);
 
 /**
- * Three balls, three bands, three bags. Each bag holds one ball.
+ * Three balls, three bands, three bags. A bag holds as many as the shape allows.
  * A sling with a ball can be pulled while another ball is in the air.
  */
 export class Sim {
   readonly world: RAPIER.World;
-  private groundCollider: RAPIER.Collider;
   private bagColliders: RAPIER.Collider[] = [];
   private readonly shots: Shot[];
   private readonly gone: boolean[];
@@ -112,9 +107,6 @@ export class Sim {
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
     this.world.integrationParameters.lengthUnit = 80;
-    const ground = RAPIER.ColliderDesc.cuboid(240, 16).setTranslation(195, GROUND_Y - 16);
-    ground.setRestitution(0.05);
-    this.groundCollider = this.world.createCollider(ground);
     this.syncBags();
     this.gone = BAGS.map(() => false);
     this.shots = SLINGS.map((sling) => this.makeShot(sling));
@@ -127,17 +119,16 @@ export class Sim {
         .setCcdEnabled(true),
     );
     const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS).setRestitution(0.05),
+      RAPIER.ColliderDesc.ball(BIRD_R).setMass(MASS),
       bird,
     );
+    applyBall(bird, collider, ballMaterial());
     return {
       sling,
       bird,
       collider,
       band: new Band(sling),
       phase: 'ready',
-      cloth: clearCloth(),
-      bag: -1,
       prevX: sling.pouch.x,
       prevY: sling.pouch.y,
       bandTouch: SLINGS.map(() => false),
@@ -160,8 +151,8 @@ export class Sim {
     for (const shot of this.shots) {
       shot.collider.setMass(MASS);
       shot.collider.setRadius(BIRD_R);
+      applyBall(shot.bird, shot.collider, ballMaterial());
     }
-    this.groundCollider.setTranslation({ x: 195, y: GROUND_Y - 16 });
     this.syncBags();
   }
 
@@ -177,9 +168,8 @@ export class Sim {
         vertices[i * 2] = pts[i].x;
         vertices[i * 2 + 1] = pts[i].y;
       }
-      const desc = RAPIER.ColliderDesc.polyline(vertices)
-        .setRestitution(BAG_RESTITUTION)
-        .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max);
+      const desc = RAPIER.ColliderDesc.polyline(vertices);
+      applyFixture(desc, woodMaterial());
       this.bagColliders.push(this.world.createCollider(desc));
     }
   }
@@ -198,22 +188,13 @@ export class Sim {
 
   sample(): SimSample {
     const bags: BagSample[] = BAGS.map((_, i) => ({
-      sealed: this.shots.some((shot) => {
-        if (shot.phase === 'ready' || shot.phase === 'pulling' || shot.phase === 'launching' || shot.phase === 'gone') return false;
+      count: this.shots.reduce((n, shot) => {
+        if (shot.phase === 'ready' || shot.phase === 'pulling' || shot.phase === 'launching' || shot.phase === 'gone') return n;
         const p = shot.bird.translation();
-        return ballInBag(p.x, p.y, BAGS[i]);
-      }),
+        return n + (ballInBag(p.x, p.y, BAGS[i]) ? 1 : 0);
+      }, 0),
       gone: this.gone[i],
-      give: 0,
-      pressX: 0,
-      pressY: 0,
     }));
-    for (const shot of this.shots) {
-      if (shot.bag < 0 || shot.cloth.give <= bags[shot.bag].give) continue;
-      bags[shot.bag].give = shot.cloth.give;
-      bags[shot.bag].pressX = shot.cloth.nx;
-      bags[shot.bag].pressY = shot.cloth.ny;
-    }
     return {
       hearts: this.hearts,
       shots: this.shots.map((shot) => this.sampleShot(shot)),
@@ -245,8 +226,8 @@ export class Sim {
     let bestD = 90;
     for (let i = 0; i < this.shots.length; i++) {
       const shot = this.shots[i];
-      if (shot.phase !== 'ready' && !ANIMATION.has(shot.phase)) continue;
-      const grab = shot.phase === 'catching' ? shot.bird.translation() : ANIMATION.has(shot.phase) ? shot.sling.pouch : shot.bird.translation();
+      if (!this.bandCarries(shot)) continue;
+      const grab = shot.bird.translation();
       const d = len(worldX - grab.x, worldY - grab.y);
       if (d <= bestD) {
         best = i;
@@ -336,9 +317,8 @@ export class Sim {
     }
     let x = pouch.x + dx;
     let y = pouch.y + dy;
-    const minY = GROUND_Y + BIRD_R + 12;
     x = Math.min(366, Math.max(24, x));
-    y = Math.min(800, Math.max(minY, y));
+    y = Math.min(800, Math.max(BIRD_R, y));
     const meet = meetBallY(x, shot.sling);
     const slip = slipBallY(x, shot.sling);
     if (y > slip) {
@@ -422,8 +402,6 @@ export class Sim {
     shot.ropeVx = 0;
     shot.ropeVy = 0;
     shot.band.holdSeated();
-    shot.cloth = clearCloth();
-    shot.bag = -1;
     shot.catchOn = -1;
     shot.phase = 'ready';
   }
@@ -450,13 +428,8 @@ export class Sim {
     const ay = -omega * omega * uy - 2 * BAND_ZETA * omega * shot.catchVy;
     shot.catchVx += ax * STEP;
     shot.catchVy += ay * STEP;
-    let x = p.x + shot.catchVx * STEP;
-    let y = p.y + shot.catchVy * STEP;
-    const floor = GROUND_Y + BIRD_R;
-    if (y < floor) {
-      y = floor;
-      shot.catchVy = 0;
-    }
+    const x = p.x + shot.catchVx * STEP;
+    const y = p.y + shot.catchVy * STEP;
     shot.bird.setNextKinematicTranslation({ x, y });
     this.shots[shot.catchOn].band.holdUnder(x, y);
     if (len(x - pouch.x, y - pouch.y) < 0.4 && len(shot.catchVx, shot.catchVy) < 2) {
@@ -483,6 +456,11 @@ export class Sim {
     host.ropeVx = 0;
     host.ropeVy = 0;
     host.band.holdAtRest();
+  }
+
+  /** A band holds one ball. Empty bands catch. They are not pulled. */
+  private bandCarries(shot: Shot): boolean {
+    return shot.phase === 'ready' || shot.phase === 'pulling' || shot.phase === 'launching' || shot.phase === 'catching';
   }
 
   /** Above this band's rivet line. On the line and below do not count. */
@@ -519,7 +497,7 @@ export class Sim {
     return false;
   }
 
-  /** A free band can take a ball. A band with a ball still on it, or in the hand, cannot. */
+  /** Empty bands catch. A band already carrying its one ball cannot. */
   private canCatchOn(index: number): boolean {
     const phase = this.shots[index].phase;
     if (phase !== 'flying' && phase !== 'asleep' && phase !== 'gone') return false;
@@ -610,15 +588,13 @@ export class Sim {
     if (shot.phase !== 'flying') return;
     this.knockSeated(shot);
     const p = shot.bird.translation();
-    const v = shot.bird.linvel();
     const fromX = shot.prevX;
     const fromY = shot.prevY;
     shot.prevX = p.x;
     shot.prevY = p.y;
     if (this.catchArrival(shot, fromX, fromY, p.x, p.y)) return;
-    const hitGround = p.y - BIRD_R <= GROUND_Y + 2 && v.y <= 0;
-    const out = p.x < -40 || p.x > 430 || p.y > 900;
-    if (hitGround || out) this.miss(shot);
+    const out = p.x < -40 || p.x > 430 || p.y < -40 || p.y > 900;
+    if (out) this.miss(shot);
   }
 
   private miss(shot: Shot): void {

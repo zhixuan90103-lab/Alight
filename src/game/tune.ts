@@ -1,4 +1,5 @@
 import { designToWorld } from './frame';
+import { fixtureMaterial, type Material } from './material';
 
 /** Pixel-space tune for three light balls, three bands, and three bags. */
 /** World gravity, in design pixels per second squared. Not 9.8. */
@@ -18,11 +19,14 @@ export let STIFFNESS = 150;
  */
 export let ROPE_MASS = MASS / 9;
 export let BAND_ZETA = 0.3;
-/** Bag settle damping. Higher than the band so the ball sinks in and stops. */
-/** Bowl collider restitution. Other contacts keep the body's own value. */
-export let BAG_RESTITUTION = 0.5;
-/** How far the cloth can give when a ball hits the outside, in pixels. */
-export const BAG_GIVE = 22;
+/** Ball contact. The panel edits these live. Air damping is linearDamping. */
+export let BALL_RESTITUTION = 0.05;
+export let BALL_FRICTION = 0.5;
+export let BALL_DAMPING = 0;
+/** Wooden bowl restitution. The panel edits this live. */
+export let BAG_RESTITUTION = 0.1;
+/** Wooden bowl friction. Also its fixture damping. The panel edits this live. */
+export let BAG_FRICTION = 0.6;
 export let DEAD_PULL = 28;
 export let BIRD_R = 18;
 export let ROPE_THICKNESS = 7;
@@ -69,7 +73,7 @@ export function slingAt(x: number): Sling {
 }
 
 export const SLINGS = LANE_X.map(slingAt);
-/** Three bags, one above each pouch. The middle mouth sits lower. Each holds one ball. */
+/** Three bags, one above each pouch. The middle mouth sits lower. How many balls fit is the shape. */
 export const BAG_Y = [268, 428, 268];
 export const BAGS = LANE_X.map((x, i) => designToWorld(x, BAG_Y[i]));
 
@@ -92,13 +96,8 @@ export const BAG_AT = BAGS[1];
 /** Turn the blue bag off to shoot with no target. On by default. */
 export let SHOW_BAG = true;
 
-/** Top surface of the ground, in world y. A full downward pull stays above it. */
-export const GROUND_Y = 36;
-/**
- * The band's maximum stretch. It is the pull available now: from the pouch
- * straight down until the ball stops above the ground.
- */
-export let MAX_PULL = POUCH.y - (GROUND_Y + BIRD_R + 12);
+/** The band's maximum stretch, from the pouch straight down to the bottom of the screen. */
+export let MAX_PULL = POUCH.y - BIRD_R;
 
 /** How far the ball may rise past the empty band before the finger loses it. */
 export let SLIP_LIFT = 18;
@@ -108,7 +107,11 @@ export type TunePatch = {
   mass?: number;
   stiffness?: number;
   zeta?: number;
+  ballRestitution?: number;
+  ballFriction?: number;
+  ballDamping?: number;
   bagRestitution?: number;
+  bagFriction?: number;
   deadPull?: number;
   birdR?: number;
   ropeThickness?: number;
@@ -130,7 +133,11 @@ export function writeTune(patch: TunePatch): void {
   if (patch.mass !== undefined) MASS = patch.mass;
   if (patch.stiffness !== undefined) STIFFNESS = patch.stiffness;
   if (patch.zeta !== undefined) BAND_ZETA = patch.zeta;
+  if (patch.ballRestitution !== undefined) BALL_RESTITUTION = patch.ballRestitution;
+  if (patch.ballFriction !== undefined) BALL_FRICTION = patch.ballFriction;
+  if (patch.ballDamping !== undefined) BALL_DAMPING = patch.ballDamping;
   if (patch.bagRestitution !== undefined) BAG_RESTITUTION = patch.bagRestitution;
+  if (patch.bagFriction !== undefined) BAG_FRICTION = patch.bagFriction;
   if (patch.deadPull !== undefined) DEAD_PULL = patch.deadPull;
   if (patch.birdR !== undefined) BIRD_R = patch.birdR;
   if (patch.ropeThickness !== undefined) ROPE_THICKNESS = patch.ropeThickness;
@@ -139,6 +146,14 @@ export function writeTune(patch: TunePatch): void {
   if (patch.slipLift !== undefined) SLIP_LIFT = patch.slipLift;
   if (patch.showBag !== undefined) SHOW_BAG = patch.showBag;
   refreshDerived();
+}
+
+export function ballMaterial(): Material {
+  return { restitution: BALL_RESTITUTION, friction: BALL_FRICTION, damping: BALL_DAMPING };
+}
+
+export function woodMaterial(): Material {
+  return fixtureMaterial(BAG_RESTITUTION, BAG_FRICTION);
 }
 
 /** Empty-band height at this x. Outside the anchors the curve is the anchor height. */

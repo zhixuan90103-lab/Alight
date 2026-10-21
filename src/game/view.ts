@@ -4,6 +4,7 @@ import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 import { bagStrokePoints } from './bag';
 import {
   BAGS,
+  bandWidth,
   BIRD_R,
   SHOW_BAG,
   SLINGS,
@@ -487,9 +488,7 @@ export function createPlayView(scene: THREE.Scene): {
       for (let i = 0; i < bagRibbons.length; i++) {
         const bagState = s.bags[i];
         const here = SHOW_BAG && !bagState.gone;
-        const giveX = bagState.pressX * bagState.give * 0.55;
-        const giveY = bagState.pressY * bagState.give * 0.55;
-        const pts = bagStrokePoints(BAGS[i]).map((p) => ({ x: p.x - giveX, y: p.y - giveY }));
+        const pts = bagStrokePoints(BAGS[i]);
         const ribbon = bagRibbons[i].mesh;
         const shadow = bagRibbons[i].shadow;
         ribbon.visible = here;
@@ -550,11 +549,12 @@ export function createPlayView(scene: THREE.Scene): {
         const geom = arc.mesh.geometry;
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
         const index = geom.getIndex() as THREE.BufferAttribute;
+        const width = bandWidth(shot.strain);
         const count = writeRibbon(
           attr.array as Float32Array,
           index.array as Uint32Array,
           points,
-          STROKE,
+          width,
         );
         const shadowGeom = arc.shadow.mesh.geometry;
         const shadowAttr = shadowGeom.getAttribute('position') as THREE.BufferAttribute;
@@ -563,13 +563,13 @@ export function createPlayView(scene: THREE.Scene): {
           shadowAttr.array as Float32Array,
           shadowIndex.array as Uint32Array,
           points,
-          STROKE,
+          width,
           NEAR_CAST,
         );
         shadowGeom.setDrawRange(0, shadowCount);
         shadowAttr.needsUpdate = true;
         shadowIndex.needsUpdate = true;
-        const cap = STROKE / 2;
+        const cap = width / 2;
         const tips = [points[0], points[points.length - 1]];
         for (let k = 0; k < 2; k++) {
           const end = bandEnds[i * 2 + k];

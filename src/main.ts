@@ -57,7 +57,7 @@ async function boot(): Promise<void> {
     el.className = 'bag-count';
     el.style.left = `${x}px`;
     el.style.top = `${BAG_Y[i] - BIRD_R - 22}px`;
-    el.textContent = '0/1';
+    el.textContent = '0';
     uiRoot?.append(el);
     return el;
   });
@@ -132,7 +132,7 @@ async function boot(): Promise<void> {
     last = now;
     sim.advance(dt);
     for (const cue of sim.takeFeel()) {
-      if (cue === 'pull' || cue === 'catch' || cue === 'give' || cue === 'knock') void haptics.impact('light');
+      if (cue === 'pull' || cue === 'catch' || cue === 'knock') void haptics.impact('light');
       if (cue === 'launch') void haptics.impact('medium');
       if (cue === 'asleep') void haptics.impact('heavy');
       if (cue === 'slip' || cue === 'miss' || cue === 'gone') void haptics.impact('rigid');
@@ -143,7 +143,7 @@ async function boot(): Promise<void> {
       const el = bagCounts[i];
       const here = SHOW_BAG && !bags[i].gone;
       el.style.display = here ? 'block' : 'none';
-      const text = bags[i].sealed ? '1/1' : '0/1';
+      const text = String(bags[i].count);
       if (el.textContent !== text) el.textContent = text;
     }
     view.sync(sim, dt);

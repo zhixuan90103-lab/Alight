@@ -5,20 +5,6 @@ export function bagStroke(): number {
   return ROPE_THICKNESS;
 }
 
-/** Cloth contact. The normal stays the one from the first touch. */
-export type Cloth = {
-  on: boolean;
-  nx: number;
-  ny: number;
-  cx: number;
-  cy: number;
-  give: number;
-};
-
-export function clearCloth(): Cloth {
-  return { on: false, nx: 0, ny: 1, cx: 0, cy: 0, give: 0 };
-}
-
 /** Inner half-width. The bottom is a semicircle of this radius. */
 export function bagMouthHalf(): number {
   return BIRD_R * 1.7;
