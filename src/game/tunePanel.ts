@@ -52,17 +52,29 @@ function format(value: number, step: number): string {
   return value.toFixed(digits);
 }
 
-/** On-stage sliders. They write the live tune and push it into the physics bodies. */
-export function mountTunePanel(parent: HTMLElement, sim: Sim): void {
+export function hudIcon(kind: 'tune' | 'replay'): string {
+  const mark =
+    kind === 'tune'
+      ? '<path d="M4 7h10M4 12h16M4 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="12" r="2.2"/><circle cx="16" cy="17" r="2.2"/>'
+      : '<path d="M12 6V3L7 8l5 5V10a5 5 0 1 1-4.3 2.5"/>';
+  return `<svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <g class="hud-icon-shade" transform="translate(1.4 1.8)">${mark}</g>
+    <g class="hud-icon-face">${mark}</g>
+  </svg>`;
+}
+
+/** On-stage sliders. The gear pill opens them. Values write the live tune. */
+export function mountTunePanel(uiRoot: HTMLElement, actions: HTMLElement, sim: Sim): void {
+  const head = document.createElement('button');
+  head.type = 'button';
+  head.className = 'hud-pill';
+  head.setAttribute('aria-label', '设置');
+  head.innerHTML = hudIcon('tune');
+  actions.append(head);
+
   const root = document.createElement('section');
   root.id = 'tune';
   root.addEventListener('pointerdown', (event) => event.stopPropagation());
-
-  const head = document.createElement('button');
-  head.type = 'button';
-  head.className = 'tune-head';
-  head.textContent = '参数';
-  root.append(head);
 
   const body = document.createElement('div');
   body.className = 'tune-body';
@@ -72,7 +84,6 @@ export function mountTunePanel(parent: HTMLElement, sim: Sim): void {
   const paintOpen = () => {
     body.hidden = !open;
     root.classList.toggle('is-open', open);
-    head.textContent = open ? '关闭' : '参数';
     head.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
   head.addEventListener('click', () => {
@@ -118,6 +129,5 @@ export function mountTunePanel(parent: HTMLElement, sim: Sim): void {
   });
   nest.append(nestName, nestInput);
   body.append(nest);
-
-  parent.append(root);
+  uiRoot.append(root);
 }

@@ -199,6 +199,29 @@ export class Sim {
     }
   }
 
+  /** Put level 1 back to the first ball on the band. Balls already in the bowl are removed. */
+  restart(): void {
+    for (const ball of this.parked) {
+      if (!this.shots.some((shot) => shot.bird === ball.bird)) this.world.removeRigidBody(ball.bird);
+    }
+    this.parked.length = 0;
+    this.stock = Math.max(0, LEVEL_BALLS - SLINGS.length);
+    this.accumulator = 0;
+    this.active = null;
+    this.knocks.clear();
+    this.feel = [];
+    this.camera.reset();
+    this.gone.fill(false);
+    for (const shot of this.shots) {
+      shot.refill = -1;
+      shot.drawn = 0;
+      shot.returnIn = 0;
+      shot.bandTouch = SLINGS.map(() => false);
+      shot.bird.setGravityScale(0, true);
+      this.restOnPouch(shot);
+    }
+  }
+
   static async create(): Promise<Sim> {
     await initRapier();
     return new Sim();

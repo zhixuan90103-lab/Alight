@@ -32,6 +32,10 @@ export function createFramingCamera() {
       return y;
     },
     step,
+    reset() {
+      y = 0;
+      vy = 0;
+    },
   };
 }
 
