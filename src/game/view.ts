@@ -816,11 +816,12 @@ export function createPlayView(scene: THREE.Scene): {
         bandEnds[i * 2].visible = false;
         bandEnds[i * 2 + 1].visible = false;
       }
+      let humPull = 0;
       for (let i = 0; i < s.shots.length; i++) {
         const shot = s.shots[i];
         const fingerCap = fingerPullCap();
         const pullT = shot.phase === 'pulling' && fingerCap > 0 ? Math.min(1, shot.finger / fingerCap) : 0;
-        if (pullT > 0) hum += dt * pullT;
+        if (pullT > humPull) humPull = pullT;
         const amp = pullT > 0 ? Math.sin(hum * HUM_RATE) * HUM_MAX * pullT : 0;
         const ball = balls[i];
         const ballShadow = ballShadows[i];
@@ -882,6 +883,7 @@ export function createPlayView(scene: THREE.Scene): {
         attr.needsUpdate = true;
         index.needsUpdate = true;
       }
+      hum += dt * humPull;
       for (let i = 0; i < restingBalls.length; i++) {
         const held = s.resting[i];
         const mark = restingBalls[i];

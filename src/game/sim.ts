@@ -17,7 +17,7 @@ import {
   type BallColor,
   BAND_ZETA,
   CATCH_SPAN,
-  SEAT_SAG,
+  seatY,
   BIRD_R,
   EXIT,
   LEVEL_ID,
@@ -624,7 +624,7 @@ export class Sim {
 
   private restOnPouch(shot: Shot): void {
     const pouch = shot.sling.pouch;
-    const homeY = pouch.y - SEAT_SAG;
+    const homeY = seatY(pouch.y);
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setAngvel(0, true);
@@ -657,7 +657,7 @@ export class Sim {
   private stepCatch(shot: Shot): void {
     const pouch = this.shots[shot.catchOn].sling.pouch;
     const p = shot.bird.translation();
-    const homeY = pouch.y - SEAT_SAG;
+    const homeY = seatY(pouch.y);
     const ux = p.x - pouch.x;
     const uy = p.y - homeY;
     const omega = Math.sqrt((STIFFNESS * CATCH_SPAN) / MASS);

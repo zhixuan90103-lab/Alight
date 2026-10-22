@@ -34,7 +34,7 @@ export let DEAD_PULL = 28;
 export let BIRD_R = 18;
 export let ROPE_THICKNESS = 7;
 /** Share of thickness a full pull removes. The inner edge stays on the ball. */
-export let BAND_PULL_THIN = 0.28;
+export let BAND_PULL_THIN = 0.6;
 
 export function bandWidth(strain: number): number {
   const t = Math.min(1, Math.max(0, strain));
@@ -42,14 +42,18 @@ export function bandWidth(strain: number): number {
 }
 
 /**
- * Light-ball cradle from the rest reference: anchors sit just above the sides,
- * and the rope dips under the ball. Heavier balls use the same rope and hang lower.
+ * Light-ball cradle: anchors sit above the pouch, and the rope wraps the outside of the ball.
  */
 const CRADLE_RISE = 12;
-/** Catch spring compared with the pull. Stiffer, so a landing still rebounds without dragging the rope far. */
+/** Catch spring compared with the pull. The ball still compresses and rebounds. */
 export const CATCH_SPAN = 2;
-/** Ball center below the pouch once it has settled. Negative sits above the pouch. */
-export const SEAT_SAG = -5;
+/** Settled ball center above the pouch. The rope is drawn around that point. */
+export const SEAT_LIFT = 5;
+
+/** World height of a ball that has settled on the rope. World y is up. */
+export function seatY(pouchY: number): number {
+  return pouchY + SEAT_LIFT;
+}
 /** Drawn rivet radius. Rivets do not block the ball. */
 export const RIVET_R = 5;
 
@@ -190,7 +194,7 @@ export function loadLevelLayout(id: number): void {
   ELBOWS.length = 0;
   const bowlX = 78 + BIRD_R * 2.2;
   const slingX =
-    level === 5 ? [290] : level === 2 ? [124, 266] : level === 4 ? [107, 283] : level === 3 ? [bowlX] : [312 - BIRD_R];
+    level === 5 ? [290] : level === 2 ? [124, 266] : level === 4 ? [107, 283] : level === 3 ? [bowlX + BIRD_R] : [312 - BIRD_R];
   while (SLINGS.length < slingX.length) SLINGS.push(slingAt(slingX[SLINGS.length]));
   SLINGS.length = slingX.length;
   for (let i = 0; i < slingX.length; i++) {
