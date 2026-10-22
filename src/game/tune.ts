@@ -115,9 +115,42 @@ export const SLINGS: Sling[] = [slingAt(312 - BIRD_R)];
 /** Lip anchors, world space. Parallel to `BAG_SPEC`. */
 export const BAGS: Array<{ x: number; y: number }> = [];
 export const BAG_SPEC: BagSpec[] = [];
+/** This bowl lifts off the top once a ball of its own color has settled inside. */
+export const BAG_RISE: boolean[] = [];
 /** Fixed boards. Center and half-size are world pixels. `vertical` stands the board up and rounds both ends. */
 export type Plank = { x: number; y: number; halfW: number; halfH: number; vertical: boolean; color: BallColor };
 export const PLANKS: Plank[] = [];
+/** One upright rail the rising bowl slides along. Visual only. */
+export type Rail = { x: number; y: number; halfW: number; halfH: number };
+export let RAIL: Rail | null = null;
+/** Tapered capsule. The pivot is the center of the thick end. `rest` and `swing` are world radians. */
+export type Capsule = {
+  x: number;
+  y: number;
+  length: number;
+  rThin: number;
+  rThick: number;
+  rest: number;
+  swing: number;
+};
+export let CAPSULE: Capsule | null = null;
+/** Bent board. Centerline in world space, round ends. */
+export type Elbow = { pts: Array<{ x: number; y: number }>; width: number; color: BallColor };
+export const ELBOWS: Elbow[] = [];
+
+/** Local outline. Thick-end center at the origin, thin end along -x. Closed, convex. */
+export function capsuleOutline(length: number, rThin: number, rThick: number, steps = 8): Float32Array {
+  const pts: number[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = Math.PI / 2 - (Math.PI * i) / steps;
+    pts.push(Math.cos(a) * rThick, Math.sin(a) * rThick);
+  }
+  for (let i = 0; i <= steps; i++) {
+    const a = -Math.PI / 2 - (Math.PI * i) / steps;
+    pts.push(-length + Math.cos(a) * rThin, Math.sin(a) * rThin);
+  }
+  return new Float32Array(pts);
+}
 /**
  * Where the next ball appears. Design y is down.
  * Measured from the marked point directly above the pouch.
@@ -130,12 +163,13 @@ export const SLING_MID = SLINGS[0].mid;
 
 /** Design y of the pouch. Both levels keep this height. */
 const POUCH_DESIGN_Y = 612;
-/** Design y of the exit, above the pouch. */
-const EXIT_DESIGN_Y = 472;
+/** Design y of the exit, above the pouch. 1.5 ball diameters below the old mark. */
+const EXIT_DESIGN_Y = 472 + BIRD_R * 3;
 
-function addBag(x: number, yDown: number, spec: BagSpec): void {
+function addBag(x: number, yDown: number, spec: BagSpec, rise = false): void {
   BAGS.push(designToWorld(x, yDown));
   BAG_SPEC.push(spec);
+  BAG_RISE.push(rise);
 }
 
 /** Move the bands and the bowls. Does not reset the simulation. */
@@ -144,12 +178,16 @@ export function loadLevelLayout(id: number): void {
   LEVEL_ID = level;
   BAGS.length = 0;
   BAG_SPEC.length = 0;
+  BAG_RISE.length = 0;
   BALL_QUEUE.length = 0;
   SLING_COLOR.length = 0;
   PLANKS.length = 0;
+  RAIL = null;
+  CAPSULE = null;
+  ELBOWS.length = 0;
   const bowlX = 78 + BIRD_R * 2.2;
   const slingX =
-    level === 5 ? [65, 195, 325] : level === 2 ? [124, 266] : level === 4 ? [135, 255] : level === 3 ? [bowlX] : [312 - BIRD_R];
+    level === 5 ? [290] : level === 2 ? [124, 266] : level === 4 ? [107, 283] : level === 3 ? [bowlX] : [312 - BIRD_R];
   while (SLINGS.length < slingX.length) SLINGS.push(slingAt(slingX[SLINGS.length]));
   SLINGS.length = slingX.length;
   for (let i = 0; i < slingX.length; i++) {
@@ -161,14 +199,59 @@ export function loadLevelLayout(id: number): void {
   EXIT.x = exit.x;
   EXIT.y = exit.y;
   if (level === 5) {
-    REFILL_MODE = 'same-color';
+    REFILL_MODE = 'each-band';
     LEVEL_BALLS = 6;
-    BALL_QUEUE.push('gold', 'gold', 'red', 'red', 'blue', 'blue');
-    SLING_COLOR.push('gold', 'red', 'blue');
-    const narrow: Omit<BagSpec, 'color'> = { mouthScale: 1.6, legScale: 4.2 };
-    addBag(65, 268, { color: 'gold', ...narrow });
-    addBag(195, 268, { color: 'red', ...narrow });
-    addBag(325, 268, { color: 'blue', ...narrow });
+    BALL_QUEUE.push('gold', 'gold', 'gold', 'gold', 'gold', 'gold');
+    SLING_COLOR.push('gold');
+    const bowl: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 2.4 };
+    addBag(291, 248 + BIRD_R * 2, { color: 'gold', ...bowl });
+    const pivot = designToWorld(68, 368);
+    CAPSULE = {
+      x: pivot.x,
+      y: pivot.y,
+      length: 75.6,
+      rThin: 8.4,
+      rThick: 19.6,
+      rest: (-48.4 * Math.PI) / 180 - Math.PI,
+      swing: (100 * Math.PI) / 180,
+    };
+    const x0 = 49;
+    const yTop = 140;
+    const yBot = 340;
+    const xEnd = 149 - BIRD_R * 2;
+    const rad = 80;
+    const cx = x0 + rad;
+    const cy = yTop + rad;
+    const elbow: Array<{ x: number; y: number }> = [designToWorld(x0, yBot)];
+    const steps = 8;
+    let reached = false;
+    for (let i = 0; i <= steps; i++) {
+      const a = Math.PI + (Math.PI / 2) * (i / steps);
+      const x = cx + Math.cos(a) * rad;
+      const y = cy + Math.sin(a) * rad;
+      if (x >= xEnd) {
+        const aEnd = Math.PI + Math.acos((cx - xEnd) / rad);
+        elbow.push(designToWorld(xEnd, cy + Math.sin(aEnd) * rad));
+        reached = true;
+        break;
+      }
+      elbow.push(designToWorld(x, y));
+    }
+    if (!reached) elbow.push(designToWorld(xEnd, yTop));
+    ELBOWS.push({ pts: elbow, width: 10, color: 'gold' });
+    const aEnd = Math.PI + Math.acos((cx - xEnd) / rad);
+    const leftTipY = cy + Math.sin(aEnd) * rad;
+    const lipX = 291 + BIRD_R * 2.5 + ROPE_THICKNESS / 2;
+    const yBotR = 248 + BIRD_R * 2 - BIRD_R - 10 - 18 - BIRD_R * 2;
+    const radR = yBotR - leftTipY - 12;
+    const crx = lipX - radR;
+    const cry = leftTipY + radR;
+    const right: Array<{ x: number; y: number }> = [designToWorld(lipX, yBotR)];
+    for (let i = 0; i <= steps; i++) {
+      const a = (-Math.PI / 2) * (i / steps);
+      right.push(designToWorld(crx + Math.cos(a) * radR, cry + Math.sin(a) * radR));
+    }
+    ELBOWS.push({ pts: right, width: 10, color: 'gold' });
   } else if (level === 2 || level === 4) {
     REFILL_MODE = 'same-color';
     LEVEL_BALLS = 6;
@@ -176,13 +259,9 @@ export function loadLevelLayout(id: number): void {
     if (level === 4) {
       BALL_QUEUE.push('gold', 'gold', 'gold', 'blue', 'blue', 'blue');
       SLING_COLOR.push('gold', 'blue');
-      addBag(135, 300, { color: 'gold', ...small });
-      addBag(255, 300, { color: 'blue', ...small });
-      const boards: Array<[number, BallColor]> = [[18, 'gold'], [372, 'blue']];
-      for (const [x, color] of boards) {
-        const center = designToWorld(x, 322);
-        PLANKS.push({ x: center.x, y: center.y, halfW: 6, halfH: 56, vertical: true, color });
-      }
+      const taller: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 3.4 };
+      addBag(107, 300, { color: 'gold', ...taller });
+      addBag(283, 300, { color: 'blue', ...taller });
     } else {
       BALL_QUEUE.push('blue', 'blue', 'blue', 'gold', 'gold', 'gold');
       SLING_COLOR.push('blue', 'gold');

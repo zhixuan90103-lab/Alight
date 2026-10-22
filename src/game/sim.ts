@@ -6,6 +6,9 @@ import { applyBall, applyFixture } from './material';
 import {
   BAGS,
   BAG_SPEC,
+  CAPSULE,
+  ELBOWS,
+  capsuleOutline,
   BALL_QUEUE,
   ballMaterial,
   plankMaterial,
@@ -16,6 +19,7 @@ import {
   BIRD_R,
   EXIT,
   LEVEL_BALLS,
+  LEVEL_ID,
   REFILL_MODE,
   SLING_COLOR,
   DEAD_PULL,
@@ -70,6 +74,8 @@ export type SimSample = {
   issued: number;
   /** Colors already sent, in the order they left the exits. */
   issuedColors: BallColor[];
+  /** Left-side tapered capsule. Null on levels that do not have one. */
+  capsule: { x: number; y: number; angle: number; length: number; rThin: number; rThick: number } | null;
 };
 
 type Shot = {
@@ -138,6 +144,9 @@ export class Sim {
   private readonly camera = createFramingCamera();
   /** Balls already placed in the bowl. Their bodies stay in the world. */
   private readonly parked: Array<{ bird: RAPIER.RigidBody; collider: RAPIER.Collider; color: BallColor }> = [];
+  private capsuleBody: RAPIER.RigidBody | null = null;
+  /** Seconds into the snap-and-return cycle. */
+  private capsuleT = 0;
   /** Balls still waiting to drop from the exit. */
   private stock = LEVEL_BALLS;
   /** Balls already dropped from the exit. Each one is an empty pip, from the left. */
@@ -241,6 +250,31 @@ export class Sim {
       this.bagColliders.push(collider);
     }
     this.syncPlanks();
+    this.syncElbow();
+  }
+
+  /** Bent board. Centerline plus round ends. Same bounce as the straight boards. */
+  private syncElbow(): void {
+    for (const elbow of ELBOWS) {
+      const pts = elbow.pts;
+      const vertices = new Float32Array(pts.length * 2);
+      for (let i = 0; i < pts.length; i++) {
+        vertices[i * 2] = pts[i].x;
+        vertices[i * 2 + 1] = pts[i].y;
+      }
+      const parts = [
+        RAPIER.ColliderDesc.polyline(vertices),
+        RAPIER.ColliderDesc.ball(elbow.width / 2).setTranslation(pts[0].x, pts[0].y),
+        RAPIER.ColliderDesc.ball(elbow.width / 2).setTranslation(pts[pts.length - 1].x, pts[pts.length - 1].y),
+      ];
+      for (const desc of parts) {
+        applyFixture(desc, plankMaterial());
+        const collider = this.world.createCollider(desc);
+        collider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+        this.bagHandles.add(collider.handle);
+        this.plankColliders.push(collider);
+      }
+    }
   }
 
   /** Fixed board. Same bounce as the bowl. */
@@ -286,6 +320,9 @@ export class Sim {
       if (!this.shots.some((shot) => shot.bird === ball.bird)) this.world.removeRigidBody(ball.bird);
     }
     this.parked.length = 0;
+    loadLevelLayout(LEVEL_ID);
+    this.syncBags();
+    this.syncCapsule();
     this.stock = LEVEL_BALLS;
     this.issued = 0;
     this.issuedColors = [];
@@ -371,6 +408,16 @@ export class Sim {
       }),
       issued: this.issued,
       issuedColors: this.issuedColors.slice(),
+      capsule: CAPSULE
+        ? {
+            x: CAPSULE.x,
+            y: CAPSULE.y,
+            angle: this.capsuleAngle(),
+            length: CAPSULE.length,
+            rThin: CAPSULE.rThin,
+            rThick: CAPSULE.rThick,
+          }
+        : null,
     };
   }
 
@@ -775,6 +822,7 @@ export class Sim {
       else if (shot.refill >= 0) this.stepRefill(shot);
       else if (shot.phase !== 'pulling' && shot.phase !== 'settling' && !this.bandHeld(this.shots.indexOf(shot))) shot.band.step(STEP);
     }
+    this.stepCapsule();
     this.world.step(this.events);
     this.events.drainCollisionEvents((a, b, started) => {
       if (!started) return;
@@ -823,6 +871,53 @@ export class Sim {
     shot.refill = -1;
     if (REFILL_MODE === 'same-color') this.settledColors.push(shot.color);
     else this.issue(shot);
+  }
+
+  /** 0 at rest, 1 at the top of the snap. The rise is fast. The return is slow. */
+  private capsuleUnit(): number {
+    const snap = 0.1;
+    const top = 1;
+    const back = 0.8;
+    const hold = 0.1;
+    const t = this.capsuleT % (snap + top + back + hold);
+    if (t < snap) {
+      const s = t / snap;
+      return 1 - (1 - s) * (1 - s);
+    }
+    if (t < snap + top) return 1;
+    if (t < snap + top + back) return 1 - (t - snap - top) / back;
+    return 0;
+  }
+
+  private capsuleAngle(): number {
+    if (!CAPSULE) return 0;
+    return CAPSULE.rest + CAPSULE.swing * this.capsuleUnit();
+  }
+
+  private syncCapsule(): void {
+    if (this.capsuleBody) {
+      this.world.removeRigidBody(this.capsuleBody);
+      this.capsuleBody = null;
+    }
+    this.capsuleT = 0;
+    if (!CAPSULE) return;
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(CAPSULE.x, CAPSULE.y).setRotation(CAPSULE.rest),
+    );
+    const hull = RAPIER.ColliderDesc.convexHull(capsuleOutline(CAPSULE.length, CAPSULE.rThin, CAPSULE.rThick));
+    if (hull) {
+      applyFixture(hull, woodMaterial());
+      this.world.createCollider(hull, body);
+    }
+    this.capsuleBody = body;
+  }
+
+  /** Snap the thick end upward, then let it drift back. Runs before the physics step. */
+  private stepCapsule(): void {
+    if (!CAPSULE || !this.capsuleBody) return;
+    this.capsuleT += STEP;
+    this.capsuleBody.setNextKinematicTranslation({ x: CAPSULE.x, y: CAPSULE.y });
+    this.capsuleBody.setNextKinematicRotation(this.capsuleAngle());
   }
 
   /** Same-color mode: the next ball waits until the previous one has died or landed in a bowl. */

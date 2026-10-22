@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../adapt/design';
 
 import { bagStrokePoints } from './bag';
+import { capsuleOutline } from './tune';
 import {
+  BAG_RISE,
   BAGS,
   BAG_SPEC,
   BALL_DAMPING,
@@ -13,6 +15,8 @@ import {
   GRAVITY,
   MASS,
   PLANKS,
+  RAIL,
+  ELBOWS,
   SHOW_BAG,
   SHOW_HINT,
   SLINGS,
@@ -34,7 +38,13 @@ const FIELD = 0x7fa5bf;
 const BAND = 0xffffff;
 const RIVET = 0x777268;
 const GOLD = 0xecbf77;
+/** Dark gray rivet in the middle of the capsule's thick end. */
+const CAPSULE_RIVET = 0x4e555c;
+/** A step darker than the gold bowl. Used only for the rail knob. */
+const KNOB = 0xc49a55;
 const SHADOW = 0x5f8096;
+/** A step lighter than the shadow. Used only for the rail bowl's track. */
+const RAIL_COLOR = 0x7098b0;
 /** Shadow runs down-right. The soft ring is 10% of that length. */
 const SHADOW_X = 14;
 const SHADOW_Y = -14;
@@ -498,6 +508,53 @@ export function createPlayView(scene: THREE.Scene): {
     });
     return { mesh, shadow: mountShadow(meshGeom(SHADOW_VERTS, SHADOW_INDICES)), caps };
   });
+  const railMat = new THREE.MeshBasicMaterial({ color: RAIL_COLOR });
+  const railMesh = new THREE.Mesh(meshGeom(RIBBON_VERTS, RIBBON_INDICES), railMat);
+  railMesh.frustumCulled = false;
+  railMesh.renderOrder = 1;
+  scene.add(railMesh);
+  const railCaps = [0, 1].map(() => {
+    const cap = circle(1, RAIL_COLOR, 64);
+    cap.material = railMat;
+    cap.renderOrder = 1;
+    scene.add(cap);
+    return cap;
+  });
+  const capsuleMat = new THREE.MeshBasicMaterial({ color: GOLD });
+  const capsuleShadowMat = new THREE.MeshBasicMaterial({ color: SHADOW });
+  const capsuleMesh = new THREE.Mesh(new THREE.BufferGeometry(), capsuleMat);
+  const capsuleShadow = new THREE.Mesh(new THREE.BufferGeometry(), capsuleShadowMat);
+  capsuleMesh.frustumCulled = false;
+  capsuleShadow.frustumCulled = false;
+  capsuleMesh.renderOrder = 3;
+  capsuleShadow.renderOrder = 1;
+  scene.add(capsuleShadow);
+  scene.add(capsuleMesh);
+  const capsuleRivet = circle(1, CAPSULE_RIVET, 64);
+  capsuleRivet.material = new THREE.MeshBasicMaterial({ color: CAPSULE_RIVET });
+  capsuleRivet.renderOrder = 4;
+  capsuleRivet.visible = false;
+  scene.add(capsuleRivet);
+  const elbowSlots = [0, 1].map(() => {
+    const mesh = new THREE.Mesh(meshGeom(RIBBON_VERTS, RIBBON_INDICES), bowlMat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 3;
+    scene.add(mesh);
+    const shadow = mountShadow(meshGeom(SHADOW_VERTS, SHADOW_INDICES));
+    const caps = [0, 1].map(() => {
+      const cap = circle(1, GOLD, 64);
+      cap.material = bowlMat;
+      cap.renderOrder = 3;
+      scene.add(cap);
+      return cap;
+    });
+    return { mesh, shadow, caps };
+  });
+  const railKnob = circle(1, KNOB, 64);
+  railKnob.material = new THREE.MeshBasicMaterial({ color: KNOB, depthTest: false, depthWrite: false });
+  railKnob.renderOrder = 2;
+  railKnob.visible = false;
+  scene.add(railKnob);
 
   const rivetR = STROKE * 0.34;
   const rivets: THREE.Mesh[] = [];
@@ -556,6 +613,28 @@ export function createPlayView(scene: THREE.Scene): {
     look,
     sync(sim: Sim, dt: number) {
       const s = sim.sample();
+      const cap = s.capsule;
+      capsuleMesh.visible = Boolean(cap);
+      capsuleShadow.visible = Boolean(cap);
+      capsuleRivet.visible = Boolean(cap);
+      if (cap) {
+        const flat = capsuleOutline(cap.length, cap.rThin, cap.rThick);
+        const shape = new THREE.Shape();
+        shape.moveTo(flat[0], flat[1]);
+        for (let i = 2; i < flat.length; i += 2) shape.lineTo(flat[i], flat[i + 1]);
+        shape.closePath();
+        capsuleMesh.geometry.dispose();
+        capsuleShadow.geometry.dispose();
+        const geom = new THREE.ShapeGeometry(shape);
+        capsuleMesh.geometry = geom;
+        capsuleShadow.geometry = geom.clone();
+        capsuleMesh.position.set(cap.x, cap.y, 0.3);
+        capsuleMesh.rotation.z = cap.angle;
+        capsuleShadow.position.set(cap.x + SHADOW_X * NEAR_CAST, cap.y + SHADOW_Y * NEAR_CAST, 0.1);
+        capsuleShadow.rotation.z = cap.angle;
+        capsuleRivet.position.set(cap.x, cap.y, 0.5);
+        capsuleRivet.scale.set(cap.rThick * 0.38, cap.rThick * 0.38, 1);
+      }
       hum += dt;
       for (let n = 0; n < plankRibbons.length; n++) {
         const board = PLANKS[n];
@@ -604,6 +683,63 @@ export function createPlayView(scene: THREE.Scene): {
           slot.caps[i].scale.set(width / 2, width / 2, 1);
         }
       }
+      for (let e = 0; e < elbowSlots.length; e++) {
+        const elbow = ELBOWS[e];
+        const slot = elbowSlots[e];
+        const elbowOn = Boolean(elbow && SHOW_BAG);
+        slot.mesh.visible = elbowOn;
+        slot.shadow.group.visible = elbowOn;
+        for (const cap of slot.caps) cap.visible = elbowOn;
+        if (!elbow || !elbowOn) continue;
+        const paint = bowlPaint[elbow.color];
+        slot.mesh.material = paint;
+        const geom = slot.mesh.geometry;
+        const attr = geom.getAttribute('position') as THREE.BufferAttribute;
+        const index = geom.getIndex() as THREE.BufferAttribute;
+        const count = writeRibbon(attr.array as Float32Array, index.array as Uint32Array, elbow.pts, elbow.width);
+        geom.setDrawRange(0, count);
+        attr.needsUpdate = true;
+        index.needsUpdate = true;
+        const shadowGeom = slot.shadow.mesh.geometry;
+        const shadowAttr = shadowGeom.getAttribute('position') as THREE.BufferAttribute;
+        const shadowIndex = shadowGeom.getIndex() as THREE.BufferAttribute;
+        const shadowCount = writeStrokeShadow(
+          shadowAttr.array as Float32Array,
+          shadowIndex.array as Uint32Array,
+          elbow.pts,
+          elbow.width,
+        );
+        shadowGeom.setDrawRange(0, shadowCount);
+        shadowAttr.needsUpdate = true;
+        shadowIndex.needsUpdate = true;
+        const ends = [elbow.pts[0], elbow.pts[elbow.pts.length - 1]];
+        for (let i = 0; i < 2; i++) {
+          slot.caps[i].material = paint;
+          slot.caps[i].position.set(ends[i].x, ends[i].y, 0.55);
+          slot.caps[i].scale.set(elbow.width / 2, elbow.width / 2, 1);
+        }
+      }
+      const rail = RAIL;
+      railMesh.visible = Boolean(rail);
+      for (const cap of railCaps) cap.visible = Boolean(rail);
+      if (rail) {
+        const pts = [
+          { x: rail.x, y: rail.y + rail.halfH },
+          { x: rail.x, y: rail.y - rail.halfH },
+        ];
+        const width = rail.halfW * 2;
+        const geom = railMesh.geometry;
+        const attr = geom.getAttribute('position') as THREE.BufferAttribute;
+        const index = geom.getIndex() as THREE.BufferAttribute;
+        const count = writeRibbon(attr.array as Float32Array, index.array as Uint32Array, pts, width);
+        geom.setDrawRange(0, count);
+        attr.needsUpdate = true;
+        index.needsUpdate = true;
+        for (let i = 0; i < 2; i++) {
+          railCaps[i].position.set(pts[i].x, pts[i].y, 0.4);
+          railCaps[i].scale.set(width / 2, width / 2, 1);
+        }
+      }
       for (let i = 0; i < bagRibbons.length; i++) {
         const bagState = s.bags[i];
         const here = Boolean(bagState) && SHOW_BAG && !bagState.gone;
@@ -650,6 +786,17 @@ export function createPlayView(scene: THREE.Scene): {
           end.position.set(tips[k].x, tips[k].y, 0.55);
           end.scale.set(endR, endR, 1);
         }
+        if (BAG_RISE[i] && BAG_SPEC[i]?.color === 'gold') {
+          let bottom = pts[0];
+          for (const p of pts) if (p.y < bottom.y) bottom = p;
+          const knobR = RAIL?.halfW ?? STROKE / 2;
+          railKnob.visible = true;
+          railKnob.position.set(bottom.x, bottom.y, 0);
+          railKnob.scale.set(knobR * 1.25, knobR * 1.25, 1);
+        }
+      }
+      if (!BAG_RISE.some((rise, i) => rise && BAG_SPEC[i]?.color === 'gold' && s.bags[i] && !s.bags[i].gone)) {
+        railKnob.visible = false;
       }
       for (let i = 0; i < rivets.length; i++) {
         const sling = SLINGS[Math.floor(i / 2)];
