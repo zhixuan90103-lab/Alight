@@ -9,9 +9,9 @@ export let MASS = 1;
 /**
  * Rubber-band stiffness.
  * Rest: sag = mass × gravity / stiffness.
- * Release: speed = pull length × √(stiffness / mass). Finger speed is ignored.
+ * Release speed uses launchSpeed. A full draw counts as LAUNCH_PULL, not the visible stretch.
  */
-export let STIFFNESS = 200;
+export let STIFFNESS = 210;
 /**
  * The band itself is light, so it retracts faster than the ball's flight.
  * After the ball leaves, internal friction (zeta) lets it overshoot once, then stop.
@@ -61,7 +61,9 @@ export type Sling = {
 /** Rest length between the rivets. The ball sits on the midpoint. */
 export let BAND_LENGTH = 100;
 /** How far a pull may go, in band lengths. Longer bands still pull farther. */
-const BAND_PULL_SPAN = 1.6;
+const BAND_PULL_SPAN = 1.1;
+/** Length used for a full-power shot, in band lengths. The ball is not drawn this far. */
+const LAUNCH_SPAN = 1.6;
 
 export function slingAt(x: number): Sling {
   const pouch = { x, y: POUCH.y };
@@ -297,8 +299,56 @@ export function setShowHint(on: boolean): void {
   SHOW_HINT = on;
 }
 
-/** How far the band may be drawn. 1.6 times its length, 160 pixels at the default. */
+/** How far the band may be drawn. 1.1 times its length, 110 pixels at the default. */
 export let MAX_PULL = BAND_LENGTH * BAND_PULL_SPAN;
+/** Stretch that a full draw counts as for launch speed. 1.6 times the band, 160 pixels at the default. */
+export let LAUNCH_PULL = BAND_LENGTH * LAUNCH_SPAN;
+
+/** Release speed from how far the ball has left the pouch. A full draw matches a 1.6-length pull. */
+export function launchSpeed(drawn: number): number {
+  if (drawn <= 0 || MAX_PULL <= 0) return 0;
+  const reach = (Math.min(drawn, MAX_PULL) / MAX_PULL) * LAUNCH_PULL;
+  return reach * Math.sqrt(STIFFNESS / MASS);
+}
+
+/** Finger travel that fills the band. Shorter than the pouch-to-bottom gap, so a full pull stays on screen. */
+export const FINGER_PULL_CAP = 200;
+
+/** Finger travel that fills the band. */
+export function fingerPullCap(): number {
+  return FINGER_PULL_CAP;
+}
+
+/**
+ * Scale of the follow curve. Slope at the pouch is 1, and the ball reaches MAX_PULL at the finger cap.
+ * Returns 0 when the cap is not longer than the full pull, so the ball stays on the finger until MAX_PULL.
+ */
+function followScale(cap: number, maxPull: number): number {
+  const ratio = maxPull / cap;
+  let u = 1.7;
+  for (let i = 0; i < 8; i++) {
+    const e = Math.exp(-u);
+    const gap = (1 - e) / u - ratio;
+    const slope = (u * e - (1 - e)) / (u * u);
+    u -= gap / slope;
+  }
+  return cap / u;
+}
+
+/**
+ * Ball stretch while a finger is `finger` pixels from the pouch.
+ * Starts one-to-one. At the finger cap the ball is at MAX_PULL. Past the cap it stays there.
+ */
+export function followPull(finger: number): number {
+  if (finger <= 0 || MAX_PULL <= 0) return 0;
+  const cap = fingerPullCap();
+  if (cap <= MAX_PULL) return Math.min(finger, MAX_PULL);
+  const f = Math.min(finger, cap);
+  if (f >= cap) return MAX_PULL;
+  const scale = followScale(cap, MAX_PULL);
+  const end = 1 - Math.exp(-cap / scale);
+  return (MAX_PULL * (1 - Math.exp(-f / scale))) / end;
+}
 
 /** How far the ball may rise past the empty band before the finger loses it. */
 export let SLIP_LIFT = 18;
@@ -329,6 +379,7 @@ function refreshDerived(): void {
   REST_SAG = restSag(MASS);
   EMPTY_SAG = restSag(ROPE_MASS);
   MAX_PULL = BAND_LENGTH * BAND_PULL_SPAN;
+  LAUNCH_PULL = BAND_LENGTH * LAUNCH_SPAN;
   for (const sling of SLINGS) {
     const half = BAND_LENGTH / 2;
     sling.left.x = sling.pouch.x - half;

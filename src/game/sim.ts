@@ -36,6 +36,8 @@ import {
   type Sling,
   meetBallY,
   slipBallY,
+  followPull,
+  launchSpeed,
 } from './tune';
 
 export type Phase = 'ready' | 'pulling' | 'launching' | 'flying' | 'catching' | 'settling' | 'asleep' | 'returning' | 'emerging' | 'gone';
@@ -48,6 +50,8 @@ export type ShotSample = {
   birdY: number;
   band: ReadonlyArray<{ x: number; y: number }>;
   strain: number;
+  /** Finger distance from the pouch while pulling. 0 otherwise. */
+  finger: number;
   aimX: number;
   aimY: number;
   /** 1 when the ball is full size. Smaller while it is leaving the pipe. */
@@ -104,6 +108,8 @@ type Shot = {
   emerge: number;
   /** Seconds left before the next ball drops. Negative means no refill is waiting. */
   refill: number;
+  /** Finger distance from the pouch during a pull. */
+  finger: number;
 };
 
 let ready: Promise<void> | null = null;
@@ -195,6 +201,7 @@ export class Sim {
       color: 'gold',
       emerge: 1,
       refill: -1,
+      finger: 0,
     };
   }
 
@@ -425,6 +432,7 @@ export class Sim {
       birdY: p.y,
       band: shot.band.points(),
       strain: loaded ? Math.min(1, pull / MAX_PULL) : 0,
+      finger: shot.phase === 'pulling' ? shot.finger : 0,
       aimX: pull > 1 ? dx / pull : 0,
       aimY: pull > 1 ? dy / pull : 1,
       scale: shot.phase === 'emerging' ? Math.min(1, shot.emerge / 0.35) : 1,
@@ -522,9 +530,11 @@ export class Sim {
     const pouch = shot.sling.pouch;
     let dx = worldX - pouch.x;
     let dy = worldY - pouch.y;
-    const pull = len(dx, dy);
-    if (pull > MAX_PULL && pull > 0) {
-      const s = MAX_PULL / pull;
+    const finger = len(dx, dy);
+    shot.finger = finger;
+    const pull = followPull(finger);
+    if (finger > 0) {
+      const s = pull / finger;
       dx *= s;
       dy *= s;
     }
@@ -595,7 +605,7 @@ export class Sim {
 
   private detach(shot: Shot, bandVx: number, bandVy: number): void {
     const pouch = shot.sling.pouch;
-    const speed = shot.drawn * Math.sqrt(STIFFNESS / MASS);
+    const speed = launchSpeed(shot.drawn);
     shot.bird.setTranslation({ x: pouch.x, y: pouch.y }, true);
     shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
     shot.bird.setGravityScale(1, true);
