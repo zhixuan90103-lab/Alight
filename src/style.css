@@ -177,6 +177,10 @@ body {
   display: block;
 }
 
+.hud-icon-btn.is-on .hud-icon {
+  opacity: 1;
+}
+
 #balls {
   display: flex;
   gap: 8px;
@@ -196,6 +200,10 @@ body {
   background: #4d95dc;
 }
 
+.ball-pip.is-red {
+  background: #e25b4a;
+}
+
 .ball-pip.is-empty {
   background: transparent;
   box-shadow: none;
@@ -204,6 +212,10 @@ body {
 
 .ball-pip.is-blue.is-empty {
   border-color: #4d95dc;
+}
+
+.ball-pip.is-red.is-empty {
+  border-color: #e25b4a;
 }
 
 #tune {

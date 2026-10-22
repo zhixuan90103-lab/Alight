@@ -257,7 +257,11 @@ export class Sim {
             RAPIER.ColliderDesc.ball(plank.halfW).setTranslation(plank.x, plank.y + plank.halfH),
             RAPIER.ColliderDesc.ball(plank.halfW).setTranslation(plank.x, plank.y - plank.halfH),
           ]
-        : [RAPIER.ColliderDesc.cuboid(plank.halfW, plank.halfH).setTranslation(plank.x, plank.y)];
+        : [
+            RAPIER.ColliderDesc.cuboid(plank.halfW, plank.halfH).setTranslation(plank.x, plank.y),
+            RAPIER.ColliderDesc.ball(plank.halfH).setTranslation(plank.x + plank.halfW, plank.y),
+            RAPIER.ColliderDesc.ball(plank.halfH).setTranslation(plank.x - plank.halfW, plank.y),
+          ];
       for (const desc of parts) {
         applyFixture(desc, plankMaterial());
         const collider = this.world.createCollider(desc);

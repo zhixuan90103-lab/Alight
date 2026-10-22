@@ -57,7 +57,7 @@ function format(value: number, step: number): string {
 }
 
 /** Phosphor Light icons in public/icons. */
-export function hudIcon(name: 'gear' | 'arrow-clockwise' | 'arrow-right' | 'star' | 'star-fill'): HTMLImageElement {
+export function hudIcon(name: 'gear' | 'arrow-clockwise' | 'arrow-right' | 'eye' | 'star' | 'star-fill'): HTMLImageElement {
   const el = document.createElement('img');
   el.className = 'hud-icon';
   el.alt = '';

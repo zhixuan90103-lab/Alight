@@ -5,12 +5,18 @@ import { bagStrokePoints } from './bag';
 import {
   BAGS,
   BAG_SPEC,
+  BALL_DAMPING,
   BALL_HEX,
   bandWidth,
   BIRD_R,
+  DEAD_PULL,
+  GRAVITY,
+  MASS,
   PLANKS,
   SHOW_BAG,
+  SHOW_HINT,
   SLINGS,
+  STIFFNESS,
   type BallColor,
 } from './tune';
 import type { Sim } from './sim';
@@ -406,8 +412,15 @@ export function createPlayView(scene: THREE.Scene): {
     opacity: 1,
     depthWrite: true,
   });
-  const ballMat: Record<BallColor, THREE.MeshBasicMaterial> = { gold: goldMat, blue: blueMat };
-  const bowlPaint: Record<BallColor, THREE.MeshBasicMaterial> = { gold: bowlMat, blue: blueMat };
+  const redMat = new THREE.MeshBasicMaterial({
+    color: BALL_HEX.red,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 1,
+    depthWrite: true,
+  });
+  const ballMat: Record<BallColor, THREE.MeshBasicMaterial> = { gold: goldMat, blue: blueMat, red: redMat };
+  const bowlPaint: Record<BallColor, THREE.MeshBasicMaterial> = { gold: bowlMat, blue: blueMat, red: redMat };
   const mountShadow = (geom: THREE.BufferGeometry, cast = 1) => {
     const group = new THREE.Group();
     const len = Math.hypot(SHADOW_X, SHADOW_Y) || 1;
@@ -432,7 +445,7 @@ export function createPlayView(scene: THREE.Scene): {
     return { mesh, group };
   };
 
-  const bagRibbons = [0, 1].map(() => {
+  const bagRibbons = [0, 1, 2].map(() => {
     const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
     const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
     const shadow = mountShadow(shadowGeom);
@@ -451,7 +464,7 @@ export function createPlayView(scene: THREE.Scene): {
     scene.add(end);
   }
 
-  const BAND_SLOTS = 2;
+  const BAND_SLOTS = 3;
   const arcs = Array.from({ length: BAND_SLOTS }, () => {
     const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
     const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
@@ -471,7 +484,7 @@ export function createPlayView(scene: THREE.Scene): {
     bandEnds.push(end);
     scene.add(end);
   }
-  const plankRibbons = [0, 1].map(() => {
+  const plankRibbons = [0, 1, 2].map(() => {
     const mesh = new THREE.Mesh(meshGeom(RIBBON_VERTS, RIBBON_INDICES), bowlMat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 3;
@@ -513,6 +526,19 @@ export function createPlayView(scene: THREE.Scene): {
     scene.add(group);
     return group;
   });
+  const ARC_DOTS = 56;
+  const arcXY = new Float32Array(ARC_DOTS * 2);
+  const arcDummy = new THREE.Object3D();
+  const arcDots = new THREE.InstancedMesh(
+    new THREE.CircleGeometry(1, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }),
+    ARC_DOTS,
+  );
+  arcDots.count = 0;
+  arcDots.frustumCulled = false;
+  arcDots.renderOrder = 6;
+  arcDots.visible = false;
+  scene.add(arcDots);
   const restingBalls = Array.from({ length: 6 }, () => {
     const body = circle(1, GOLD);
     body.material = goldMat;
@@ -534,7 +560,7 @@ export function createPlayView(scene: THREE.Scene): {
       for (let n = 0; n < plankRibbons.length; n++) {
         const board = PLANKS[n];
         const slot = plankRibbons[n];
-        const showBoard = Boolean(board?.vertical);
+        const showBoard = Boolean(board);
         const paint = bowlPaint[board?.color ?? 'gold'];
         slot.mesh.material = paint;
         slot.mesh.visible = showBoard;
@@ -543,12 +569,17 @@ export function createPlayView(scene: THREE.Scene): {
           cap.material = paint;
           cap.visible = showBoard;
         }
-        if (!board?.vertical) continue;
-        const pts = [
-          { x: board.x, y: board.y + board.halfH },
-          { x: board.x, y: board.y - board.halfH },
-        ];
-        const width = board.halfW * 2;
+        if (!board) continue;
+        const pts = board.vertical
+          ? [
+              { x: board.x, y: board.y + board.halfH },
+              { x: board.x, y: board.y - board.halfH },
+            ]
+          : [
+              { x: board.x - board.halfW, y: board.y },
+              { x: board.x + board.halfW, y: board.y },
+            ];
+        const width = (board.vertical ? board.halfW : board.halfH) * 2;
         const geom = slot.mesh.geometry;
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
         const index = geom.getIndex() as THREE.BufferAttribute;
@@ -570,7 +601,7 @@ export function createPlayView(scene: THREE.Scene): {
         shadowIndex.needsUpdate = true;
         for (let i = 0; i < 2; i++) {
           slot.caps[i].position.set(pts[i].x, pts[i].y, 0.55);
-          slot.caps[i].scale.set(board.halfW, board.halfW, 1);
+          slot.caps[i].scale.set(width / 2, width / 2, 1);
         }
       }
       for (let i = 0; i < bagRibbons.length; i++) {
@@ -717,6 +748,58 @@ export function createPlayView(scene: THREE.Scene): {
         attr.needsUpdate = true;
         index.needsUpdate = true;
       }
+      let arcCount = 0;
+      const pulling = SHOW_HINT ? s.shots.findIndex((item) => item.phase === 'pulling') : -1;
+      if (pulling >= 0) {
+        const shot = s.shots[pulling];
+        const pouch = SLINGS[pulling]?.pouch;
+        if (pouch) {
+          const pull = Math.hypot(pouch.x - shot.birdX, pouch.y - shot.birdY);
+          if (pull >= DEAD_PULL) {
+            const speed = pull * Math.sqrt(STIFFNESS / MASS);
+            let vx = shot.aimX * speed;
+            let vy = shot.aimY * speed;
+            let x = pouch.x;
+            let y = pouch.y;
+            const floor = s.look.y - DESIGN_HEIGHT / 2 - 20;
+            const dt = 1 / 40;
+            const damp = Math.exp(-BALL_DAMPING * dt);
+            for (let n = 0; n < ARC_DOTS; n++) {
+              vy -= GRAVITY * dt;
+              vx *= damp;
+              vy *= damp;
+              x += vx * dt;
+              y += vy * dt;
+              if (y < floor) break;
+              arcXY[arcCount * 2] = x;
+              arcXY[arcCount * 2 + 1] = y;
+              arcCount += 1;
+            }
+          }
+        }
+      }
+      const ballX = pulling >= 0 ? s.shots[pulling].birdX : 0;
+      const ballY = pulling >= 0 ? s.shots[pulling].birdY : 0;
+      let near = Infinity;
+      let far = 0;
+      for (let i = 0; i < arcCount; i++) {
+        const dist = Math.hypot(arcXY[i * 2] - ballX, arcXY[i * 2 + 1] - ballY);
+        near = Math.min(near, dist);
+        far = Math.max(far, dist);
+      }
+      const span = Math.max(1, far - near);
+      for (let i = 0; i < arcCount; i++) {
+        const dist = Math.hypot(arcXY[i * 2] - ballX, arcXY[i * 2 + 1] - ballY);
+        const t = (dist - near) / span;
+        const radius = 3.2 - t * 2;
+        arcDummy.position.set(arcXY[i * 2], arcXY[i * 2 + 1], 1.2);
+        arcDummy.scale.set(radius, radius, 1);
+        arcDummy.updateMatrix();
+        arcDots.setMatrixAt(i, arcDummy.matrix);
+      }
+      arcDots.count = arcCount;
+      arcDots.instanceMatrix.needsUpdate = true;
+      arcDots.visible = arcCount > 0;
       look.x = s.look.x;
       look.y = s.look.y;
       camera.position.set(homeX + look.x, homeY + look.y, 10);

@@ -24,7 +24,7 @@ export let BALL_RESTITUTION = 0.05;
 export let BALL_FRICTION = 1;
 export let BALL_DAMPING = 0;
 /** Wooden bowl restitution. The panel edits this live. */
-export let BAG_RESTITUTION = 0.25;
+export let BAG_RESTITUTION = 0.4;
 /** Wooden bowl friction. Also its fixture damping. The panel edits this live. */
 export let BAG_FRICTION = 2;
 /** Vertical board. Its own bounce, not the bowl's. The panel edits these live. */
@@ -76,12 +76,13 @@ export function slingAt(x: number): Sling {
   };
 }
 
-export type BallColor = 'gold' | 'blue';
+export type BallColor = 'gold' | 'blue' | 'red';
 
-/** Flat colors. Gold is the level-1 ball. Blue is darker than the field so it stays readable. */
+/** Flat colors. Gold is the level-1 ball. Blue and red stay readable on the blue field. */
 export const BALL_HEX: Record<BallColor, number> = {
   gold: 0xecbf77,
   blue: 0x4d95dc,
+  red: 0xe25b4a,
 };
 
 export type BagSpec = {
@@ -100,7 +101,7 @@ export type RefillMode = 'each-band' | 'same-color';
 
 /** Which level is on screen. 1 is the single gold U. 2 is the two-color pair. 3 adds a fixed board. */
 export let LEVEL_ID = 1;
-export const LEVEL_COUNT = 4;
+export const LEVEL_COUNT = 5;
 export let REFILL_MODE: RefillMode = 'each-band';
 /** Issue order shown by the pips. Level 2 is three blue, then three gold. */
 export const BALL_QUEUE: BallColor[] = [];
@@ -139,7 +140,7 @@ function addBag(x: number, yDown: number, spec: BagSpec): void {
 
 /** Move the bands and the bowls. Does not reset the simulation. */
 export function loadLevelLayout(id: number): void {
-  const level = id === 4 ? 4 : id === 3 ? 3 : id === 2 ? 2 : 1;
+  const level = id >= 1 && id <= 5 ? id : 1;
   LEVEL_ID = level;
   BAGS.length = 0;
   BAG_SPEC.length = 0;
@@ -147,7 +148,8 @@ export function loadLevelLayout(id: number): void {
   SLING_COLOR.length = 0;
   PLANKS.length = 0;
   const bowlX = 78 + BIRD_R * 2.2;
-  const slingX = level === 2 ? [124, 266] : level === 4 ? [135, 255] : level === 3 ? [bowlX] : [312 - BIRD_R];
+  const slingX =
+    level === 5 ? [65, 195, 325] : level === 2 ? [124, 266] : level === 4 ? [135, 255] : level === 3 ? [bowlX] : [312 - BIRD_R];
   while (SLINGS.length < slingX.length) SLINGS.push(slingAt(slingX[SLINGS.length]));
   SLINGS.length = slingX.length;
   for (let i = 0; i < slingX.length; i++) {
@@ -158,7 +160,16 @@ export function loadLevelLayout(id: number): void {
   const exit = designToWorld(slingX[0], EXIT_DESIGN_Y);
   EXIT.x = exit.x;
   EXIT.y = exit.y;
-  if (level === 2 || level === 4) {
+  if (level === 5) {
+    REFILL_MODE = 'same-color';
+    LEVEL_BALLS = 6;
+    BALL_QUEUE.push('gold', 'gold', 'red', 'red', 'blue', 'blue');
+    SLING_COLOR.push('gold', 'red', 'blue');
+    const narrow: Omit<BagSpec, 'color'> = { mouthScale: 1.6, legScale: 4.2 };
+    addBag(65, 268, { color: 'gold', ...narrow });
+    addBag(195, 268, { color: 'red', ...narrow });
+    addBag(325, 268, { color: 'blue', ...narrow });
+  } else if (level === 2 || level === 4) {
     REFILL_MODE = 'same-color';
     LEVEL_BALLS = 6;
     const small: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 2.4 };
@@ -207,6 +218,12 @@ export const MAX_CATCHUP = 0.25;
 export const BAG_AT = { x: 0, y: 0 };
 /** Turn the blue bag off to shoot with no target. On by default. */
 export let SHOW_BAG = true;
+/** Hint button. While on, a pull past the dead zone draws the free-flight arc. */
+export let SHOW_HINT = false;
+
+export function setShowHint(on: boolean): void {
+  SHOW_HINT = on;
+}
 
 /** How far the band may be drawn. 1.6 times its length, 160 pixels at the default. */
 export let MAX_PULL = BAND_LENGTH * BAND_PULL_SPAN;

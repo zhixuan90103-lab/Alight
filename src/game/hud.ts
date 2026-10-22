@@ -1,5 +1,5 @@
 import type { Sim, SimSample } from './sim';
-import { BALL_QUEUE, LEVEL_BALLS, LEVEL_COUNT, LEVEL_ID } from './tune';
+import { BALL_QUEUE, LEVEL_BALLS, LEVEL_COUNT, LEVEL_ID, SHOW_HINT, setShowHint } from './tune';
 import { hudIcon, mountTunePanel } from './tunePanel';
 
 export type Hud = {
@@ -44,11 +44,18 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, next
   const jump = iconButton('跳关');
   jump.append(hudIcon('arrow-right'));
   jump.addEventListener('click', jumpLevel);
+  const hint = iconButton('提示');
+  hint.append(hudIcon('eye'));
+  hint.classList.toggle('is-on', SHOW_HINT);
+  hint.addEventListener('click', () => {
+    setShowHint(!SHOW_HINT);
+    hint.classList.toggle('is-on', SHOW_HINT);
+  });
 
   top.append(balls, actions);
   hud.append(top);
   uiRoot.prepend(hud);
-  actions.append(again, jump);
+  actions.append(again, jump, hint);
   mountTunePanel(uiRoot, actions, sim);
 
   const result = document.createElement('div');
@@ -89,9 +96,9 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, next
         pips.push(dot);
       }
       balls.setAttribute('aria-label', `本关 ${LEVEL_BALLS} 颗球`);
-      const sent = { gold: 0, blue: 0 };
+      const sent = { gold: 0, blue: 0, red: 0 };
       for (const color of sample.issuedColors) sent[color] += 1;
-      const seen = { gold: 0, blue: 0 };
+      const seen = { gold: 0, blue: 0, red: 0 };
       pips.forEach((pip, i) => {
         const live = i < LEVEL_BALLS;
         pip.hidden = !live;
@@ -100,6 +107,7 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, next
         seen[color] += 1;
         pip.classList.toggle('is-empty', sent[color] >= seen[color]);
         pip.classList.toggle('is-blue', color === 'blue');
+        pip.classList.toggle('is-red', color === 'red');
       });
     },
     showResult(passed: boolean) {

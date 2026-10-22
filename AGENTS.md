@@ -72,4 +72,4 @@ npm run ios
 
 - Android（可后加）  
 - WebGL 静默回退  
-- 第一关以外的队列、错色、错尺寸、音效（见 `docs/GAME-RULES.md` 第 9 节和 `docs/IMPLEMENTATION.md` 第 9 节）  
+- 残影、错尺寸、音效，以及第 9 节列出的其余项（见 `docs/GAME-RULES.md` 第 9 节和 `docs/IMPLEMENTATION.md` 第 9 节）  

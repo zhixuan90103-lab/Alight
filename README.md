@@ -11,7 +11,7 @@
 | [docs/AUDIO.md](./docs/AUDIO.md) | 音效方案（预解码 + 每帧一批 + 原生池） |
 | [docs/HAPTICS.md](./docs/HAPTICS.md) | 震动如何一次接对（插件注册 + 玩法层） |
 | [docs/GAME-RULES.md](./docs/GAME-RULES.md) | 规则。第 0 节是操作优先 |
-| [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md) | 第一关怎么做：一根皮筋、一只 U、五颗球、数 |
+| [docs/IMPLEMENTATION.md](./docs/IMPLEMENTATION.md) | 五关怎么做：摆放、补球、界面、抛物线提示、数 |
 
 ## 30 秒上手
 
@@ -22,7 +22,7 @@ npm run dev
 # → http://127.0.0.1:5190/
 ```
 
-应看到：桌面手机框、右边一根皮筋、左边一只金色 U、左上五颗球点、右上重玩和设置。桌面可切手机/Pad。桌面无原生马达，属正常。
+应看到：桌面手机框、右边一根皮筋、左边一只金色 U、左上五颗球点、右上重玩、跳关、提示和设置。提示默认关着，打开后只有拉动过死区才画出抛物线。桌面可切手机/Pad。桌面无原生马达，属正常。
 
 ## 合并了什么
 
