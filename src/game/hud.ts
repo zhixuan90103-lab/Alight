@@ -1,5 +1,5 @@
 import type { Sim, SimSample } from './sim';
-import { BALL_QUEUE, LEVEL_BALLS, LEVEL_COUNT, LEVEL_ID, SHOW_HINT, setShowHint } from './tune';
+import { LEVEL_BALLS, SHOW_HINT, setShowHint } from './tune';
 import { hudIcon, mountTunePanel } from './tunePanel';
 
 export type Hud = {
@@ -96,23 +96,17 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, next
         pips.push(dot);
       }
       balls.setAttribute('aria-label', `本关 ${LEVEL_BALLS} 颗球`);
-      const sent = { gold: 0, blue: 0, red: 0 };
-      for (const color of sample.issuedColors) sent[color] += 1;
-      const seen = { gold: 0, blue: 0, red: 0 };
       pips.forEach((pip, i) => {
         const live = i < LEVEL_BALLS;
         pip.hidden = !live;
         if (!live) return;
-        const color = BALL_QUEUE[i] ?? 'gold';
-        seen[color] += 1;
-        pip.classList.toggle('is-empty', sent[color] >= seen[color]);
-        pip.classList.toggle('is-blue', color === 'blue');
-        pip.classList.toggle('is-red', color === 'red');
+        pip.classList.toggle('is-empty', i < sample.issued);
+        pip.classList.remove('is-blue', 'is-red');
       });
     },
     showResult(passed: boolean) {
       verdict.textContent = passed ? '过关' : '失败';
-      next.hidden = !passed || LEVEL_ID >= LEVEL_COUNT;
+      next.hidden = !passed;
       actions.hidden = true;
       result.hidden = false;
     },

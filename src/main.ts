@@ -60,9 +60,8 @@ async function boot(): Promise<void> {
           sim.restart();
         },
         () => {
-          if (LEVEL_ID >= LEVEL_COUNT) return;
           clearResult();
-          sim.loadLevel(LEVEL_ID + 1);
+          sim.loadLevel(LEVEL_ID >= LEVEL_COUNT ? 1 : LEVEL_ID + 1);
         },
         () => {
           clearResult();

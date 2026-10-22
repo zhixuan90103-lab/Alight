@@ -192,30 +192,14 @@ body {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--gold);
+  background: #fff;
   box-shadow: 1px 2px 0 #5f8096;
-}
-
-.ball-pip.is-blue {
-  background: #4d95dc;
-}
-
-.ball-pip.is-red {
-  background: #e25b4a;
 }
 
 .ball-pip.is-empty {
   background: transparent;
   box-shadow: none;
-  border: 2px dashed var(--gold);
-}
-
-.ball-pip.is-blue.is-empty {
-  border-color: #4d95dc;
-}
-
-.ball-pip.is-red.is-empty {
-  border-color: #e25b4a;
+  border: 2px dashed #fff;
 }
 
 #tune {

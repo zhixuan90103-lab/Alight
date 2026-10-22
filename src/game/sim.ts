@@ -357,19 +357,18 @@ export class Sim {
   }
 
   /**
-   * Set once every ball has left play: parked in the U, or gone below the view.
-   * `inBag` is how many of those balls are still inside the U.
+   * Pass as soon as every bowl holds a same-color ball.
+   * Fail only after every ball has left play and a bowl is still short.
    */
   result(): { passed: boolean } | null {
-    if (this.shots.some((shot) => shot.phase !== 'gone' || shot.refill >= 0)) return null;
-    if (REFILL_MODE === 'same-color') {
-      if (SLING_COLOR.some((color) => this.canRefresh(color))) return null;
-    } else if (this.stock > 0) return null;
     const passed = BAGS.every((_, index) => this.parked.some((ball) => {
       const p = ball.bird.translation();
       return ball.color === BAG_SPEC[index]?.color && ballInBag(p.x, p.y, index);
     }));
-    return { passed };
+    if (passed) return { passed: true };
+    if (this.shots.some((shot) => shot.phase !== 'gone' || shot.refill >= 0)) return null;
+    if (REFILL_MODE === 'same-color' && SLING_COLOR.some((color) => this.canRefresh(color))) return null;
+    return { passed: false };
   }
 
   static async create(): Promise<Sim> {
@@ -843,7 +842,7 @@ export class Sim {
     shot.phase = 'gone';
     shot.refill = -1;
     if (REFILL_MODE === 'same-color') this.settledColors.push(color);
-    else if (this.remaining(this.colorFor(shot)) > 0) shot.refill = REFILL_DELAY;
+    else if (this.remaining(color) > 0 && !this.colorDone(color)) shot.refill = REFILL_DELAY;
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setGravityScale(0, true);
@@ -864,13 +863,13 @@ export class Sim {
     else if (shot.phase === 'gone') this.issue(shot);
   }
 
-  /** The flying ball has rested inside the U. It stays. Level 2 may then refill that color. */
+  /** The flying ball is inside the U. It stays. A finished color does not drop another ball. */
   private arrive(shot: Shot): void {
     this.parked.push({ bird: shot.bird, collider: shot.collider, color: shot.color });
     shot.phase = 'gone';
     shot.refill = -1;
     if (REFILL_MODE === 'same-color') this.settledColors.push(shot.color);
-    else this.issue(shot);
+    else if (this.remaining(shot.color) > 0 && !this.colorDone(shot.color)) shot.refill = REFILL_DELAY;
   }
 
   /** 0 at rest, 1 at the top of the snap. The rise is fast. The return is slow. */
@@ -920,7 +919,17 @@ export class Sim {
     this.capsuleBody.setNextKinematicRotation(this.capsuleAngle());
   }
 
-  /** Same-color mode: the next ball waits until the previous one has died or landed in a bowl. */
+  /** Every bowl of this color already holds a matching ball. */
+  private colorDone(color: BallColor): boolean {
+    const indexes = BAG_SPEC.map((spec, index) => (spec.color === color ? index : -1)).filter((index) => index >= 0);
+    if (indexes.length === 0) return false;
+    return indexes.every((index) => this.parked.some((ball) => {
+      const p = ball.bird.translation();
+      return ball.color === color && ballInBag(p.x, p.y, index);
+    }));
+  }
+
+  /** Same-color mode: the next ball waits until the previous one has died or landed. */
   private alive(color: BallColor): number {
     const used = this.issuedColors.filter((item) => item === color).length;
     const settled = this.settledColors.filter((item) => item === color).length;
@@ -928,7 +937,7 @@ export class Sim {
   }
 
   private canRefresh(color: BallColor): boolean {
-    return this.remaining(color) > 0 && (REFILL_MODE !== 'same-color' || this.alive(color) === 0);
+    return this.remaining(color) > 0 && !this.colorDone(color) && (REFILL_MODE !== 'same-color' || this.alive(color) === 0);
   }
 
   private homeShot(color: BallColor): Shot {
@@ -1012,14 +1021,7 @@ export class Sim {
       return;
     }
     if (this.sealedInBowl(p.x, p.y)) {
-      if (REFILL_MODE === 'same-color') {
-        this.arrive(shot);
-        return;
-      }
-      if (shot.refill < 0) {
-        if (this.stock <= 0) this.arrive(shot);
-        else shot.refill = REFILL_DELAY;
-      }
+      this.arrive(shot);
       return;
     }
     if (shot.refill >= 0 && !BAGS.some((_, i) => ballInBag(p.x, p.y, i))) shot.refill = -1;
