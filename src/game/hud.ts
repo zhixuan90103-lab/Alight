@@ -106,6 +106,7 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, next
     },
     showResult(passed: boolean) {
       verdict.textContent = passed ? '过关' : '失败';
+      result.classList.toggle('is-fail', !passed);
       next.hidden = !passed;
       actions.hidden = true;
       result.hidden = false;

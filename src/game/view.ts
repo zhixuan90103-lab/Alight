@@ -58,6 +58,81 @@ const STROKE = 8;
 const HUM_MAX = 1.6;
 /** Radians per second at a full pull. A shorter pull is slower. */
 const HUM_RATE = 64;
+/** Preferred space between hint dots. A short arc uses a tighter gap so the line stays a line. */
+const HINT_GAP = 12;
+const HINT_MIN = 8;
+
+type HintDot = { x: number; y: number; radius: number; opacity: number };
+
+/**
+ * Free-flight dots from the pouch to the apex.
+ * Spacing follows the arc. A short arc still gets HINT_MIN dots instead of two or three.
+ * Opacity falls with height and is 0 at the apex. Each dot carries its own opacity.
+ */
+function sampleHintArc(
+  x0: number,
+  y0: number,
+  vx: number,
+  vy: number,
+  floorY: number,
+  limit: number,
+): HintDot[] {
+  const dt = 1 / 240;
+  const damp = Math.exp(-BALL_DAMPING * dt);
+  const path: Array<{ x: number; y: number }> = [{ x: x0, y: y0 }];
+  let x = x0;
+  let y = y0;
+  const rising = vy > 0;
+  for (let n = 0; n < 4000; n++) {
+    vy -= GRAVITY * dt;
+    vx *= damp;
+    vy *= damp;
+    x += vx * dt;
+    y += vy * dt;
+    if (y < floorY) break;
+    path.push({ x, y });
+    if (rising ? vy <= 0 : path.length > 2 && vy >= 0) break;
+  }
+  let length = 0;
+  for (let i = 1; i < path.length; i++) length += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+  if (length < 1) return [];
+  const gap = Math.min(HINT_GAP, length / HINT_MIN);
+  const raw: Array<{ x: number; y: number }> = [];
+  let walked = 0;
+  for (let i = 1; i < path.length && raw.length < limit; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    if (seg < 1e-6) continue;
+    let consumed = 0;
+    while (walked + (seg - consumed) >= gap && raw.length < limit) {
+      const need = gap - walked;
+      const t = (consumed + need) / seg;
+      raw.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      consumed += need;
+      walked = 0;
+    }
+    walked += seg - consumed;
+  }
+  if (raw.length === 0) return [];
+  let yLo = raw[0].y;
+  let yHi = raw[0].y;
+  for (const p of raw) {
+    yLo = Math.min(yLo, p.y);
+    yHi = Math.max(yHi, p.y);
+  }
+  const rise = Math.max(1, yHi - yLo);
+  return raw.map((p, i) => {
+    const along = raw.length <= 1 ? 0 : i / (raw.length - 1);
+    const height = rising ? (p.y - yLo) / rise : along;
+    return {
+      x: p.x,
+      y: p.y,
+      radius: 3.2 - along * 1.2,
+      opacity: 0.9 * (1 - height),
+    };
+  });
+}
 function humAlongForce(
   points: ReadonlyArray<{ x: number; y: number }>,
   birdX: number,
@@ -586,19 +661,23 @@ export function createPlayView(scene: THREE.Scene): {
     scene.add(group);
     return group;
   });
-  const ARC_DOTS = 56;
-  const arcXY = new Float32Array(ARC_DOTS * 2);
-  const arcDummy = new THREE.Object3D();
-  const arcDots = new THREE.InstancedMesh(
-    new THREE.CircleGeometry(1, 16),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }),
-    ARC_DOTS,
-  );
-  arcDots.count = 0;
-  arcDots.frustumCulled = false;
-  arcDots.renderOrder = 6;
-  arcDots.visible = false;
-  scene.add(arcDots);
+  const HINT_DOTS = 80;
+  const hintGeom = new THREE.CircleGeometry(1, 16);
+  const hintDots = Array.from({ length: HINT_DOTS }, () => {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(hintGeom, mat);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 6;
+    scene.add(mesh);
+    return mesh;
+  });
   const restingBalls = Array.from({ length: 6 }, () => {
     const body = circle(1, GOLD);
     body.material = goldMat;
@@ -902,8 +981,8 @@ export function createPlayView(scene: THREE.Scene): {
         attr.needsUpdate = true;
         index.needsUpdate = true;
       }
-      let arcCount = 0;
       const pulling = SHOW_HINT ? s.shots.findIndex((item) => item.phase === 'pulling') : -1;
+      let hint: HintDot[] = [];
       if (pulling >= 0) {
         const shot = s.shots[pulling];
         const pouch = SLINGS[pulling]?.pouch;
@@ -911,49 +990,26 @@ export function createPlayView(scene: THREE.Scene): {
           const pull = Math.hypot(pouch.x - shot.birdX, pouch.y - shot.birdY);
           if (pull >= DEAD_PULL) {
             const speed = launchSpeed(pull);
-            let vx = shot.aimX * speed;
-            let vy = shot.aimY * speed;
-            let x = pouch.x;
-            let y = pouch.y;
-            const floor = s.look.y - DESIGN_HEIGHT / 2 - 20;
-            const dt = 1 / 40;
-            const damp = Math.exp(-BALL_DAMPING * dt);
-            for (let n = 0; n < ARC_DOTS; n++) {
-              vy -= GRAVITY * dt;
-              vx *= damp;
-              vy *= damp;
-              x += vx * dt;
-              y += vy * dt;
-              if (y < floor) break;
-              arcXY[arcCount * 2] = x;
-              arcXY[arcCount * 2 + 1] = y;
-              arcCount += 1;
-            }
+            hint = sampleHintArc(
+              pouch.x,
+              pouch.y,
+              shot.aimX * speed,
+              shot.aimY * speed,
+              s.look.y - DESIGN_HEIGHT / 2 - 20,
+              HINT_DOTS,
+            );
           }
         }
       }
-      const ballX = pulling >= 0 ? s.shots[pulling].birdX : 0;
-      const ballY = pulling >= 0 ? s.shots[pulling].birdY : 0;
-      let near = Infinity;
-      let far = 0;
-      for (let i = 0; i < arcCount; i++) {
-        const dist = Math.hypot(arcXY[i * 2] - ballX, arcXY[i * 2 + 1] - ballY);
-        near = Math.min(near, dist);
-        far = Math.max(far, dist);
+      for (let i = 0; i < hintDots.length; i++) {
+        const mesh = hintDots[i];
+        const dot = hint[i];
+        mesh.visible = Boolean(dot);
+        if (!dot) continue;
+        mesh.position.set(dot.x, dot.y, 1.2);
+        mesh.scale.set(dot.radius, dot.radius, 1);
+        (mesh.material as THREE.MeshBasicMaterial).opacity = dot.opacity;
       }
-      const span = Math.max(1, far - near);
-      for (let i = 0; i < arcCount; i++) {
-        const dist = Math.hypot(arcXY[i * 2] - ballX, arcXY[i * 2 + 1] - ballY);
-        const t = (dist - near) / span;
-        const radius = 3.2 - t * 2;
-        arcDummy.position.set(arcXY[i * 2], arcXY[i * 2 + 1], 1.2);
-        arcDummy.scale.set(radius, radius, 1);
-        arcDummy.updateMatrix();
-        arcDots.setMatrixAt(i, arcDummy.matrix);
-      }
-      arcDots.count = arcCount;
-      arcDots.instanceMatrix.needsUpdate = true;
-      arcDots.visible = arcCount > 0;
       look.x = s.look.x;
       look.y = s.look.y;
       camera.position.set(homeX + look.x, homeY + look.y, 10);

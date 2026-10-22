@@ -226,12 +226,16 @@ body {
 }
 
 .result-card {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  padding: 22px 28px;
-  border-radius: 16px;
+  justify-content: center;
+  gap: 21px;
+  width: 195px;
+  height: 167px;
+  padding: 29px 36px;
+  border-radius: 21px;
   background: rgba(15, 23, 42, 0.92);
 }
 
@@ -241,15 +245,39 @@ body {
 
 #result-verdict {
   color: var(--gold);
-  font-size: 28px;
+  font-size: 36px;
   font-weight: 700;
   line-height: 1;
 }
 
 #result-actions {
   display: flex;
-  gap: 14px;
+  gap: 18px;
   align-items: center;
+}
+
+#result-actions .hud-icon-btn {
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  min-height: 52px;
+  max-width: 52px;
+  max-height: 52px;
+  flex: 0 0 52px;
+}
+
+#result-actions .hud-icon-btn[hidden] {
+  display: flex;
+  visibility: hidden;
+}
+
+#result.is-fail #result-actions .hud-icon-btn[hidden] {
+  display: none;
+}
+
+#result-actions .hud-icon {
+  width: 29px;
+  height: 29px;
 }
 
 .tune-body {

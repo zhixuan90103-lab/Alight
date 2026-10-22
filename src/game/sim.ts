@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { bagMouth, bagOuterPoints, ballInBag } from './bag';
+import { DESIGN_WIDTH } from '../adapt/design';
+import { bagDepth, bagMouth, bagOuterPoints, ballInBag } from './bag';
 import { levelMatched, mayIssue, type HeldBall } from './outcome';
 import { Band } from './band';
 import { createFramingCamera } from './camera';
@@ -18,6 +19,7 @@ import {
   BAND_ZETA,
   CATCH_SPAN,
   seatY,
+  BALL_RESTITUTION,
   BIRD_R,
   EXIT,
   LEVEL_ID,
@@ -112,6 +114,8 @@ type Shot = {
   refill: number;
   /** Finger distance from the pouch during a pull. */
   finger: number;
+  /** Seconds the center has stayed off the left, right, or bottom. */
+  outFor: number;
 };
 
 let ready: Promise<void> | null = null;
@@ -128,6 +132,8 @@ function len(x: number, y: number): number {
 const ANIMATION: ReadonlySet<Phase> = new Set(['launching', 'flying', 'catching', 'returning']);
 /** Same wait after a death and after the ball is in the bowl for good. */
 const REFILL_DELAY = 0.5;
+/** Seconds the center must stay off the left, right, or bottom before the ball dies. */
+const OUT_DELAY = 0.3;
 /** Opening beat: five solid pips, empty band, then the first ball drops. */
 const OPEN_DELAY = 0.45;
 
@@ -159,6 +165,8 @@ export class Sim {
   private issuedColors: BallColor[] = [];
   /** Level 2: same-color balls that died or landed in a bowl. */
   private settledColors: BallColor[] = [];
+  /** Colors whose last ball died, so the next drop skips the bowl wait. */
+  private readonly deathRefresh = new Set<BallColor>();
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
@@ -204,6 +212,7 @@ export class Sim {
       emerge: 1,
       refill: -1,
       finger: 0,
+      outFor: 0,
     };
   }
 
@@ -829,6 +838,7 @@ export class Sim {
     }
     this.stepCapsule();
     this.world.step(this.events);
+    this.separateBalls();
     this.events.drainCollisionEvents((a, b, started) => {
       if (!started) return;
       const hitBag = this.bagHandles.has(a) || this.bagHandles.has(b);
@@ -842,16 +852,168 @@ export class Sim {
     }
   }
 
-  /** The ball fell through the bottom of the current view. The next one waits the same delay. */
+  /** A ball the bowl already keeps. Another ball must not push it out. */
+  private heldInBowl(body: RAPIER.RigidBody): boolean {
+    if (this.parked.some((ball) => ball.bird === body)) return true;
+    const p = body.translation();
+    return this.sealedInBowl(p.x, p.y);
+  }
+
+  /**
+   * Rapier can leave two balls overlapping inside the bowl.
+   * A ball already kept by the bowl stays put. The other ball takes the overlap.
+   * Neither is moved from inside a bowl to outside it.
+   */
+  private separateBalls(): void {
+    const bodies: RAPIER.RigidBody[] = [];
+    for (const ball of this.parked) bodies.push(ball.bird);
+    for (const shot of this.shots) {
+      if (shot.phase !== 'flying') continue;
+      if (this.parked.some((ball) => ball.bird === shot.bird)) continue;
+      bodies.push(shot.bird);
+    }
+    const min = BIRD_R * 2;
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) {
+        const a = bodies[i];
+        const b = bodies[j];
+        const pa = a.translation();
+        const pb = b.translation();
+        let dx = pb.x - pa.x;
+        let dy = pb.y - pa.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist >= min - 0.05) continue;
+        if (dist < 1e-4) {
+          dx = 1;
+          dy = 0;
+          dist = 1;
+        }
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const pen = min - dist;
+        const holdA = this.heldInBowl(a);
+        const holdB = this.heldInBowl(b);
+        let shiftA = holdA && !holdB ? 0 : holdB && !holdA ? pen : pen / 2;
+        let shiftB = pen - shiftA;
+        let ax = pa.x - nx * shiftA;
+        let ay = pa.y - ny * shiftA;
+        let bx = pb.x + nx * shiftB;
+        let by = pb.y + ny * shiftB;
+        const bagA = this.bagOf(pa.x, pa.y);
+        const bagB = this.bagOf(pb.x, pb.y);
+        if (bagA >= 0 && !ballInBag(ax, ay, bagA)) {
+          shiftA = 0;
+          shiftB = pen;
+          ax = pa.x;
+          ay = pa.y;
+          bx = pb.x + nx * pen;
+          by = pb.y + ny * pen;
+        }
+        if (bagB >= 0 && !ballInBag(bx, by, bagB)) {
+          shiftB = 0;
+          bx = pb.x;
+          by = pb.y;
+          if (bagA < 0 || ballInBag(pa.x - nx * pen, pa.y - ny * pen, bagA)) {
+            shiftA = pen;
+            ax = pa.x - nx * pen;
+            ay = pa.y - ny * pen;
+          } else {
+            shiftA = 0;
+            ax = pa.x;
+            ay = pa.y;
+          }
+        }
+        a.setTranslation({ x: ax, y: ay }, true);
+        b.setTranslation({ x: bx, y: by }, true);
+        this.separateVelocity(a, b, nx, ny, shiftA, shiftB);
+      }
+    }
+    this.keepParked();
+  }
+
+  /** Bounce only the ball that was moved. A held ball keeps its velocity. */
+  private separateVelocity(
+    a: RAPIER.RigidBody,
+    b: RAPIER.RigidBody,
+    nx: number,
+    ny: number,
+    shiftA: number,
+    shiftB: number,
+  ): void {
+    const va = a.linvel();
+    const vb = b.linvel();
+    const approach = (va.x - vb.x) * nx + (va.y - vb.y) * ny;
+    if (approach <= 0) return;
+    if (shiftA === 0 && shiftB === 0) {
+      if (!this.heldInBowl(b)) b.setLinvel({ x: vb.x + approach * nx, y: vb.y + approach * ny }, true);
+      else if (!this.heldInBowl(a)) a.setLinvel({ x: va.x - approach * nx, y: va.y - approach * ny }, true);
+      return;
+    }
+    if (shiftA === 0) {
+      const bounce = (1 + BALL_RESTITUTION) * approach;
+      b.setLinvel({ x: vb.x + bounce * nx, y: vb.y + bounce * ny }, true);
+      return;
+    }
+    if (shiftB === 0) {
+      const bounce = (1 + BALL_RESTITUTION) * approach;
+      a.setLinvel({ x: va.x - bounce * nx, y: va.y - bounce * ny }, true);
+      return;
+    }
+    const impulse = ((1 + BALL_RESTITUTION) * approach) / 2;
+    a.setLinvel({ x: va.x - impulse * nx, y: va.y - impulse * ny }, true);
+    b.setLinvel({ x: vb.x + impulse * nx, y: vb.y + impulse * ny }, true);
+  }
+
+  private bagOf(x: number, y: number): number {
+    for (let i = 0; i < BAGS.length; i++) if (ballInBag(x, y, i)) return i;
+    return -1;
+  }
+
+  /** A parked ball stays in a bowl. Overlap must not leave it outside the wall. */
+  private keepParked(): void {
+    for (const ball of this.parked) {
+      const p = ball.bird.translation();
+      if (this.bagOf(p.x, p.y) >= 0) continue;
+      let best = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < BAGS.length; i++) {
+        const mouth = bagMouth(BAGS[i]);
+        const seatY = mouth.y - bagDepth(i);
+        const d = (p.x - mouth.x) ** 2 + (p.y - seatY) ** 2;
+        if (d < bestD) {
+          best = i;
+          bestD = d;
+        }
+      }
+      const mouth = bagMouth(BAGS[best]);
+      const seat = { x: mouth.x, y: mouth.y - bagDepth(best) };
+      let lo = 0;
+      let hi = 1;
+      for (let n = 0; n < 12; n++) {
+        const t = (lo + hi) / 2;
+        const x = p.x + (seat.x - p.x) * t;
+        const y = p.y + (seat.y - p.y) * t;
+        if (ballInBag(x, y, best)) hi = t;
+        else lo = t;
+      }
+      const t = hi;
+      ball.bird.setTranslation({ x: p.x + (seat.x - p.x) * t, y: p.y + (seat.y - p.y) * t }, true);
+      ball.bird.setLinvel({ x: 0, y: 0 }, true);
+    }
+  }
+
+  /** Off the left, right, or bottom for OUT_DELAY. The next ball drops in this step. */
   private die(shot: Shot): void {
     const color = shot.color;
     shot.phase = 'gone';
+    shot.outFor = 0;
     shot.refill = -1;
-    this.scheduleRefill(shot, color);
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setGravityScale(0, true);
     shot.collider.setEnabled(false);
+    this.scheduleRefill(shot, color, 0);
+    this.refreshNow(shot, color);
   }
 
   /** Whole ball is below the lip, so the bowl keeps it. */
@@ -865,7 +1027,7 @@ export class Sim {
     if (shot.refill > 0) return;
     shot.refill = -1;
     if (shot.phase === 'flying') this.arrive(shot);
-    else if (shot.phase === 'gone') this.issue(shot);
+    else if (shot.phase === 'gone' && this.issue(shot)) this.deathRefresh.delete(this.colorFor(shot));
   }
 
   /** The flying ball is inside the U. It stays. A finished color does not drop another ball. */
@@ -876,13 +1038,24 @@ export class Sim {
     this.scheduleRefill(shot, shot.color);
   }
 
-  /** Death and a bowl landing share this. A finished color does not drop another ball. */
-  private scheduleRefill(shot: Shot, color: BallColor): void {
+  /** A bowl landing waits. Death passes 0 and refreshes in the same step. */
+  private scheduleRefill(shot: Shot, color: BallColor, delay = REFILL_DELAY): void {
     if (REFILL_MODE === 'same-color') {
       this.settledColors.push(color);
+      if (delay <= 0) this.deathRefresh.add(color);
       return;
     }
-    if (mayIssue(color, this.issued, 0, this.held())) shot.refill = REFILL_DELAY;
+    if (mayIssue(color, this.issued, 0, this.held())) shot.refill = delay;
+  }
+
+  /** Drop the next ball immediately after death. A bowl landing keeps the normal wait. */
+  private refreshNow(shot: Shot, color: BallColor): void {
+    const home = REFILL_MODE === 'same-color' ? this.homeShot(color) : shot;
+    const index = this.shots.indexOf(home);
+    if (home.phase !== 'gone' || this.bandHeld(index)) return;
+    if (REFILL_MODE === 'same-color' && !this.deathRefresh.has(color)) return;
+    home.refill = -1;
+    if (this.issue(home)) this.deathRefresh.delete(color);
   }
 
   private held(): HeldBall[] {
@@ -962,7 +1135,7 @@ export class Sim {
       const home = this.homeShot(color);
       const index = this.shots.indexOf(home);
       if (home.phase !== 'gone' || home.refill >= 0 || this.bandHeld(index)) continue;
-      home.refill = REFILL_DELAY;
+      home.refill = this.deathRefresh.has(color) ? 0 : REFILL_DELAY;
     }
   }
 
@@ -992,6 +1165,7 @@ export class Sim {
       shot.collider = collider;
     }
     shot.phase = 'flying';
+    shot.outFor = 0;
     shot.emerge = 0;
     shot.bandTouch = SLINGS.map(() => false);
     shot.collider.setEnabled(true);
@@ -1019,10 +1193,13 @@ export class Sim {
     const fromY = shot.prevY;
     shot.prevX = p.x;
     shot.prevY = p.y;
-    if (p.y < this.camera.y) {
-      this.die(shot);
+    const offSide = p.x < 0 || p.x > DESIGN_WIDTH || p.y < this.camera.y;
+    if (offSide) {
+      shot.outFor += STEP;
+      if (shot.outFor >= OUT_DELAY) this.die(shot);
       return;
     }
+    shot.outFor = 0;
     if (this.sealedInBowl(p.x, p.y)) {
       this.arrive(shot);
       return;
