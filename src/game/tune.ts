@@ -103,11 +103,9 @@ export type RefillMode = 'each-band' | 'same-color';
 export let LEVEL_ID = 1;
 export const LEVEL_COUNT = 5;
 export let REFILL_MODE: RefillMode = 'each-band';
-/** Issue order shown by the pips. Level 2 is three blue, then three gold. */
-export const BALL_QUEUE: BallColor[] = [];
-/** Home color of each band, parallel to `SLINGS`. */
+/** Home color of each band, parallel to `SLINGS`. Colors share `LEVEL_BALLS`. */
 export const SLING_COLOR: BallColor[] = [];
-/** Balls this level will issue. */
+/** Shared ball pool for the level. White pips. Not split by color. */
 export let LEVEL_BALLS = 5;
 
 /** One band. `loadLevelLayout` moves it. */
@@ -179,7 +177,6 @@ export function loadLevelLayout(id: number): void {
   BAGS.length = 0;
   BAG_SPEC.length = 0;
   BAG_RISE.length = 0;
-  BALL_QUEUE.length = 0;
   SLING_COLOR.length = 0;
   PLANKS.length = 0;
   RAIL = null;
@@ -201,7 +198,6 @@ export function loadLevelLayout(id: number): void {
   if (level === 5) {
     REFILL_MODE = 'each-band';
     LEVEL_BALLS = 6;
-    BALL_QUEUE.push('gold', 'gold', 'gold', 'gold', 'gold', 'gold');
     SLING_COLOR.push('gold');
     const bowl: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 2.4 };
     addBag(291, 248 + BIRD_R * 2, { color: 'gold', ...bowl });
@@ -257,13 +253,11 @@ export function loadLevelLayout(id: number): void {
     LEVEL_BALLS = 6;
     const small: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 2.4 };
     if (level === 4) {
-      BALL_QUEUE.push('gold', 'gold', 'gold', 'blue', 'blue', 'blue');
       SLING_COLOR.push('gold', 'blue');
       const taller: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 3.4 };
       addBag(107, 300, { color: 'gold', ...taller });
       addBag(283, 300, { color: 'blue', ...taller });
     } else {
-      BALL_QUEUE.push('blue', 'blue', 'blue', 'gold', 'gold', 'gold');
       SLING_COLOR.push('blue', 'gold');
       addBag(84, 248, { color: 'gold', ...small });
       addBag(306, 248, { color: 'blue', ...small });
@@ -271,7 +265,6 @@ export function loadLevelLayout(id: number): void {
   } else {
     REFILL_MODE = 'each-band';
     LEVEL_BALLS = 5;
-    BALL_QUEUE.push('gold', 'gold', 'gold', 'gold', 'gold');
     SLING_COLOR.push('gold');
     const bowlY = level === 3 ? 308 : 268;
     addBag(bowlX, bowlY, { color: 'gold', mouthScale: 3.2, legScale: 4.6 });

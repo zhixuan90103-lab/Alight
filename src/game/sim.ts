@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier2d-compat';
 import { bagMouth, bagOuterPoints, ballInBag } from './bag';
+import { levelMatched, mayIssue, type HeldBall } from './outcome';
 import { Band } from './band';
 import { createFramingCamera } from './camera';
 import { applyBall, applyFixture } from './material';
@@ -9,7 +10,6 @@ import {
   CAPSULE,
   ELBOWS,
   capsuleOutline,
-  BALL_QUEUE,
   ballMaterial,
   plankMaterial,
   woodMaterial,
@@ -18,7 +18,6 @@ import {
   BAND_ZETA,
   BIRD_R,
   EXIT,
-  LEVEL_BALLS,
   LEVEL_ID,
   REFILL_MODE,
   SLING_COLOR,
@@ -147,8 +146,6 @@ export class Sim {
   private capsuleBody: RAPIER.RigidBody | null = null;
   /** Seconds into the snap-and-return cycle. */
   private capsuleT = 0;
-  /** Balls still waiting to drop from the exit. */
-  private stock = LEVEL_BALLS;
   /** Balls already dropped from the exit. Each one is an empty pip, from the left. */
   private issued = 0;
   private issuedColors: BallColor[] = [];
@@ -323,7 +320,6 @@ export class Sim {
     loadLevelLayout(LEVEL_ID);
     this.syncBags();
     this.syncCapsule();
-    this.stock = LEVEL_BALLS;
     this.issued = 0;
     this.issuedColors = [];
     this.settledColors = [];
@@ -361,11 +357,7 @@ export class Sim {
    * Fail only after every ball has left play and a bowl is still short.
    */
   result(): { passed: boolean } | null {
-    const passed = BAGS.every((_, index) => this.parked.some((ball) => {
-      const p = ball.bird.translation();
-      return ball.color === BAG_SPEC[index]?.color && ballInBag(p.x, p.y, index);
-    }));
-    if (passed) return { passed: true };
+    if (levelMatched(this.held())) return { passed: true };
     if (this.shots.some((shot) => shot.phase !== 'gone' || shot.refill >= 0)) return null;
     if (REFILL_MODE === 'same-color' && SLING_COLOR.some((color) => this.canRefresh(color))) return null;
     return { passed: false };
@@ -841,8 +833,7 @@ export class Sim {
     const color = shot.color;
     shot.phase = 'gone';
     shot.refill = -1;
-    if (REFILL_MODE === 'same-color') this.settledColors.push(color);
-    else if (this.remaining(color) > 0 && !this.colorDone(color)) shot.refill = REFILL_DELAY;
+    this.scheduleRefill(shot, color);
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setGravityScale(0, true);
@@ -868,8 +859,23 @@ export class Sim {
     this.parked.push({ bird: shot.bird, collider: shot.collider, color: shot.color });
     shot.phase = 'gone';
     shot.refill = -1;
-    if (REFILL_MODE === 'same-color') this.settledColors.push(shot.color);
-    else if (this.remaining(shot.color) > 0 && !this.colorDone(shot.color)) shot.refill = REFILL_DELAY;
+    this.scheduleRefill(shot, shot.color);
+  }
+
+  /** Death and a bowl landing share this. A finished color does not drop another ball. */
+  private scheduleRefill(shot: Shot, color: BallColor): void {
+    if (REFILL_MODE === 'same-color') {
+      this.settledColors.push(color);
+      return;
+    }
+    if (mayIssue(color, this.issued, 0, this.held())) shot.refill = REFILL_DELAY;
+  }
+
+  private held(): HeldBall[] {
+    return this.parked.map((ball) => {
+      const p = ball.bird.translation();
+      return { color: ball.color, x: p.x, y: p.y };
+    });
   }
 
   /** 0 at rest, 1 at the top of the snap. The rise is fast. The return is slow. */
@@ -919,16 +925,6 @@ export class Sim {
     this.capsuleBody.setNextKinematicRotation(this.capsuleAngle());
   }
 
-  /** Every bowl of this color already holds a matching ball. */
-  private colorDone(color: BallColor): boolean {
-    const indexes = BAG_SPEC.map((spec, index) => (spec.color === color ? index : -1)).filter((index) => index >= 0);
-    if (indexes.length === 0) return false;
-    return indexes.every((index) => this.parked.some((ball) => {
-      const p = ball.bird.translation();
-      return ball.color === color && ballInBag(p.x, p.y, index);
-    }));
-  }
-
   /** Same-color mode: the next ball waits until the previous one has died or landed. */
   private alive(color: BallColor): number {
     const used = this.issuedColors.filter((item) => item === color).length;
@@ -937,7 +933,7 @@ export class Sim {
   }
 
   private canRefresh(color: BallColor): boolean {
-    return this.remaining(color) > 0 && !this.colorDone(color) && (REFILL_MODE !== 'same-color' || this.alive(color) === 0);
+    return mayIssue(color, this.issued, this.alive(color), this.held());
   }
 
   private homeShot(color: BallColor): Shot {
@@ -962,17 +958,10 @@ export class Sim {
     return SLING_COLOR[index] ?? 'gold';
   }
 
-  private remaining(color: BallColor): number {
-    const total = BALL_QUEUE.filter((item) => item === color).length;
-    const used = this.issuedColors.filter((item) => item === color).length;
-    return total - used;
-  }
-
   /** Drop the next ball of this band's color from the marked point. Gravity carries it onto the band. */
   private issue(shot: Shot): boolean {
     const color = this.colorFor(shot);
     if (!this.canRefresh(color)) return false;
-    this.stock -= 1;
     this.issuedColors.push(color);
     shot.color = color;
     this.issued += 1;
