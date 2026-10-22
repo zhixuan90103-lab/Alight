@@ -100,7 +100,7 @@ export type RefillMode = 'each-band' | 'same-color';
 
 /** Which level is on screen. 1 is the single gold U. 2 is the two-color pair. 3 adds a fixed board. */
 export let LEVEL_ID = 1;
-export const LEVEL_COUNT = 3;
+export const LEVEL_COUNT = 4;
 export let REFILL_MODE: RefillMode = 'each-band';
 /** Issue order shown by the pips. Level 2 is three blue, then three gold. */
 export const BALL_QUEUE: BallColor[] = [];
@@ -115,7 +115,7 @@ export const SLINGS: Sling[] = [slingAt(312 - BIRD_R)];
 export const BAGS: Array<{ x: number; y: number }> = [];
 export const BAG_SPEC: BagSpec[] = [];
 /** Fixed boards. Center and half-size are world pixels. `vertical` stands the board up and rounds both ends. */
-export type Plank = { x: number; y: number; halfW: number; halfH: number; vertical: boolean };
+export type Plank = { x: number; y: number; halfW: number; halfH: number; vertical: boolean; color: BallColor };
 export const PLANKS: Plank[] = [];
 /**
  * Where the next ball appears. Design y is down.
@@ -139,7 +139,7 @@ function addBag(x: number, yDown: number, spec: BagSpec): void {
 
 /** Move the bands and the bowls. Does not reset the simulation. */
 export function loadLevelLayout(id: number): void {
-  const level = id === 3 ? 3 : id === 2 ? 2 : 1;
+  const level = id === 4 ? 4 : id === 3 ? 3 : id === 2 ? 2 : 1;
   LEVEL_ID = level;
   BAGS.length = 0;
   BAG_SPEC.length = 0;
@@ -147,7 +147,7 @@ export function loadLevelLayout(id: number): void {
   SLING_COLOR.length = 0;
   PLANKS.length = 0;
   const bowlX = 78 + BIRD_R * 2.2;
-  const slingX = level === 2 ? [124, 266] : level === 3 ? [bowlX] : [312 - BIRD_R];
+  const slingX = level === 2 ? [124, 266] : level === 4 ? [135, 255] : level === 3 ? [bowlX] : [312 - BIRD_R];
   while (SLINGS.length < slingX.length) SLINGS.push(slingAt(slingX[SLINGS.length]));
   SLINGS.length = slingX.length;
   for (let i = 0; i < slingX.length; i++) {
@@ -158,14 +158,26 @@ export function loadLevelLayout(id: number): void {
   const exit = designToWorld(slingX[0], EXIT_DESIGN_Y);
   EXIT.x = exit.x;
   EXIT.y = exit.y;
-  if (level === 2) {
+  if (level === 2 || level === 4) {
     REFILL_MODE = 'same-color';
     LEVEL_BALLS = 6;
-    BALL_QUEUE.push('blue', 'blue', 'blue', 'gold', 'gold', 'gold');
-    SLING_COLOR.push('blue', 'gold');
     const small: Omit<BagSpec, 'color'> = { mouthScale: 2.5, legScale: 2.4 };
-    addBag(84, 248, { color: 'gold', ...small });
-    addBag(306, 248, { color: 'blue', ...small });
+    if (level === 4) {
+      BALL_QUEUE.push('gold', 'gold', 'gold', 'blue', 'blue', 'blue');
+      SLING_COLOR.push('gold', 'blue');
+      addBag(135, 300, { color: 'gold', ...small });
+      addBag(255, 300, { color: 'blue', ...small });
+      const boards: Array<[number, BallColor]> = [[18, 'gold'], [372, 'blue']];
+      for (const [x, color] of boards) {
+        const center = designToWorld(x, 322);
+        PLANKS.push({ x: center.x, y: center.y, halfW: 6, halfH: 56, vertical: true, color });
+      }
+    } else {
+      BALL_QUEUE.push('blue', 'blue', 'blue', 'gold', 'gold', 'gold');
+      SLING_COLOR.push('blue', 'gold');
+      addBag(84, 248, { color: 'gold', ...small });
+      addBag(306, 248, { color: 'blue', ...small });
+    }
   } else {
     REFILL_MODE = 'each-band';
     LEVEL_BALLS = 5;
@@ -175,7 +187,7 @@ export function loadLevelLayout(id: number): void {
     addBag(bowlX, bowlY, { color: 'gold', mouthScale: 3.2, legScale: 4.6 });
     if (level === 3) {
       const center = designToWorld(336, 350);
-      PLANKS.push({ x: center.x, y: center.y, halfW: 6, halfH: 108, vertical: true });
+      PLANKS.push({ x: center.x, y: center.y, halfW: 6, halfH: 108, vertical: true, color: 'gold' });
     }
   }
   refreshDerived();
