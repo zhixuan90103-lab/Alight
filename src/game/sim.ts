@@ -16,6 +16,8 @@ import {
   loadLevelLayout,
   type BallColor,
   BAND_ZETA,
+  CATCH_SPAN,
+  SEAT_SAG,
   BIRD_R,
   EXIT,
   LEVEL_ID,
@@ -622,16 +624,17 @@ export class Sim {
 
   private restOnPouch(shot: Shot): void {
     const pouch = shot.sling.pouch;
+    const homeY = pouch.y - SEAT_SAG;
     shot.bird.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     shot.bird.setLinvel({ x: 0, y: 0 }, true);
     shot.bird.setAngvel(0, true);
-    shot.bird.setTranslation({ x: pouch.x, y: pouch.y }, true);
-    shot.bird.setNextKinematicTranslation({ x: pouch.x, y: pouch.y });
+    shot.bird.setTranslation({ x: pouch.x, y: homeY }, true);
+    shot.bird.setNextKinematicTranslation({ x: pouch.x, y: homeY });
     shot.ropeX = pouch.x;
-    shot.ropeY = pouch.y;
+    shot.ropeY = homeY;
     shot.ropeVx = 0;
     shot.ropeVy = 0;
-    shot.band.holdSeated();
+    shot.band.holdUnder(pouch.x, homeY);
     shot.catchOn = -1;
     shot.refill = -1;
     shot.collider.setEnabled(true);
@@ -654,9 +657,10 @@ export class Sim {
   private stepCatch(shot: Shot): void {
     const pouch = this.shots[shot.catchOn].sling.pouch;
     const p = shot.bird.translation();
+    const homeY = pouch.y - SEAT_SAG;
     const ux = p.x - pouch.x;
-    const uy = p.y - pouch.y;
-    const omega = Math.sqrt(STIFFNESS / MASS);
+    const uy = p.y - homeY;
+    const omega = Math.sqrt((STIFFNESS * CATCH_SPAN) / MASS);
     const ax = -omega * omega * ux - 2 * BAND_ZETA * omega * shot.catchVx;
     const ay = -omega * omega * uy - 2 * BAND_ZETA * omega * shot.catchVy;
     shot.catchVx += ax * STEP;
@@ -673,7 +677,7 @@ export class Sim {
     const band = this.shots[shot.catchOn].band;
     if (y > meetBallY(x, sling)) band.holdAtRest();
     else band.holdUnder(x, y);
-    if (len(x - pouch.x, y - pouch.y) < 0.4 && len(shot.catchVx, shot.catchVy) < 2) {
+    if (len(x - pouch.x, y - homeY) < 0.4 && len(shot.catchVx, shot.catchVy) < 2) {
       this.settleCatch(shot);
     }
   }

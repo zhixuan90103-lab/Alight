@@ -11,7 +11,7 @@ export let MASS = 1;
  * Rest: sag = mass × gravity / stiffness.
  * Release speed uses launchSpeed. A full draw counts as LAUNCH_PULL, not the visible stretch.
  */
-export let STIFFNESS = 210;
+export let STIFFNESS = 200;
 /**
  * The band itself is light, so it retracts faster than the ball's flight.
  * After the ball leaves, internal friction (zeta) lets it overshoot once, then stop.
@@ -46,6 +46,10 @@ export function bandWidth(strain: number): number {
  * and the rope dips under the ball. Heavier balls use the same rope and hang lower.
  */
 const CRADLE_RISE = 12;
+/** Catch spring compared with the pull. Stiffer, so a landing still rebounds without dragging the rope far. */
+export const CATCH_SPAN = 2;
+/** Ball center below the pouch once it has settled. Negative sits above the pouch. */
+export const SEAT_SAG = -5;
 /** Drawn rivet radius. Rivets do not block the ball. */
 export const RIVET_R = 5;
 

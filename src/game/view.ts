@@ -56,6 +56,8 @@ const STROKE = 8;
 
 /** Full-draw hum along the pull. Anchors stay put, so the contact does not open a gap. */
 const HUM_MAX = 1.6;
+/** Radians per second at a full pull. A shorter pull is slower. */
+const HUM_RATE = 64;
 function humAlongForce(
   points: ReadonlyArray<{ x: number; y: number }>,
   birdX: number,
@@ -636,7 +638,7 @@ export function createPlayView(scene: THREE.Scene): {
         capsuleRivet.position.set(cap.x, cap.y, 0.5);
         capsuleRivet.scale.set(cap.rThick * 0.38, cap.rThick * 0.38, 1);
       }
-      hum += dt;
+
       for (let n = 0; n < plankRibbons.length; n++) {
         const board = PLANKS[n];
         const slot = plankRibbons[n];
@@ -818,7 +820,8 @@ export function createPlayView(scene: THREE.Scene): {
         const shot = s.shots[i];
         const fingerCap = fingerPullCap();
         const pullT = shot.phase === 'pulling' && fingerCap > 0 ? Math.min(1, shot.finger / fingerCap) : 0;
-        const amp = pullT > 0 ? Math.sin(hum * 64) * HUM_MAX * pullT : 0;
+        if (pullT > 0) hum += dt * pullT;
+        const amp = pullT > 0 ? Math.sin(hum * HUM_RATE) * HUM_MAX * pullT : 0;
         const ball = balls[i];
         const ballShadow = ballShadows[i];
         const bx = shot.birdX + shot.aimX * amp;
