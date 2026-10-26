@@ -152,21 +152,21 @@ async function boot(): Promise<void> {
         }
       }
     }
+    const snap = sim.sample();
     for (const cue of sim.takeFeel()) {
       if (cue === 'pull') {
-        const pulling = sim.sample().shots.find((shot) => shot.phase === 'pulling');
+        const pulling = snap.shots.find((shot) => shot.phase === 'pulling');
         beginCharge(pulling?.strain ?? 0);
       }
       if (cue === 'catch' || cue === 'knock' || cue === 'bowl') void haptics.impact('light');
       if (cue === 'launch') void haptics.impact('medium');
       if (cue === 'slip' || cue === 'miss') void haptics.impact('rigid');
     }
-    const snap = sim.sample();
     const pulling = snap.shots.find((shot) => shot.phase === 'pulling');
     if (pulling) updateCharge(pulling.strain);
     else endCharge();
     hud?.sync(snap);
-    view.sync(sim, dt);
+    view.sync(snap, dt);
     renderer.render(scene, view.camera);
   });
 

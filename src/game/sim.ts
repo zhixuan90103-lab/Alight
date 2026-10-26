@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier2d-compat';
 import { DESIGN_WIDTH } from '../adapt/design';
+import { assistRelease, type AimBand } from './aim';
 import { bagDepth, bagMouth, bagOuterPoints, ballInBag } from './bag';
 import { levelMatched, mayIssue, type HeldBall } from './outcome';
 import { Band } from './band';
@@ -31,6 +32,7 @@ import {
   MAX_CATCHUP,
   MAX_PULL,
   SHOW_BAG,
+  SHOW_HINT,
   ROPE_MASS,
   ROPE_THICKNESS,
   PLANKS,
@@ -38,6 +40,7 @@ import {
   STEP,
   STIFFNESS,
   type Sling,
+  emptyBandY,
   meetBallY,
   slipBallY,
   followPull,
@@ -167,6 +170,10 @@ export class Sim {
   private settledColors: BallColor[] = [];
   /** Colors whose last ball died, so the next drop skips the bowl wait. */
   private readonly deathRefresh = new Set<BallColor>();
+  /** Touch test scratch. Not the arrays handed to the view. */
+  private readonly touchPts: Array<{ x: number; y: number }> = [];
+  /** One band polyline per shot, reused by sample(). */
+  private readonly sampleBands: Array<Array<{ x: number; y: number }>> = [];
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY });
@@ -408,7 +415,7 @@ export class Sim {
       gone: this.gone[i],
     }));
     return {
-      shots: this.shots.map((shot) => this.sampleShot(shot)),
+      shots: this.shots.map((shot, i) => this.sampleShot(shot, i)),
       bags,
       look: { x: this.camera.x, y: this.camera.y },
       resting: this.parked.map((ball) => {
@@ -430,18 +437,21 @@ export class Sim {
     };
   }
 
-  private sampleShot(shot: Shot): ShotSample {
+  private sampleShot(shot: Shot, index: number): ShotSample {
     const p = shot.bird.translation();
     const pouch = shot.sling.pouch;
     const dx = pouch.x - p.x;
     const dy = pouch.y - p.y;
     const pull = len(dx, dy);
     const loaded = shot.phase === 'pulling' || shot.phase === 'launching';
+    let band = this.sampleBands[index];
+    if (!band) this.sampleBands[index] = band = [];
+    shot.band.copyPoints(band);
     return {
       phase: shot.phase,
       birdX: p.x,
       birdY: p.y,
-      band: shot.band.points(),
+      band,
       strain: loaded ? Math.min(1, pull / MAX_PULL) : 0,
       finger: shot.phase === 'pulling' ? shot.finger : 0,
       aimX: pull > 1 ? dx / pull : 0,
@@ -617,10 +627,13 @@ export class Sim {
   private detach(shot: Shot, bandVx: number, bandVy: number): void {
     const pouch = shot.sling.pouch;
     const speed = launchSpeed(shot.drawn);
+    const release = SHOW_HINT
+      ? { x: shot.dirX * speed, y: shot.dirY * speed }
+      : assistRelease(pouch.x, pouch.y, shot.dirX, shot.dirY, speed, shot.color, this.emptyBands(shot), this.capsuleAngle());
     shot.bird.setTranslation({ x: pouch.x, y: pouch.y }, true);
     shot.bird.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
     shot.bird.setGravityScale(1, true);
-    shot.bird.setLinvel({ x: shot.dirX * speed, y: shot.dirY * speed }, true);
+    shot.bird.setLinvel({ x: release.x, y: release.y }, true);
     shot.ropeX = pouch.x;
     shot.ropeY = pouch.y;
     shot.band.release(bandVx, bandVy, STEP);
@@ -759,6 +772,26 @@ export class Sim {
     return false;
   }
 
+  /** Bands that can catch this shot, drawn at rest. The launching band is empty once the ball leaves. */
+  private emptyBands(shot: Shot): AimBand[] {
+    const bands: AimBand[] = [];
+    for (let i = 0; i < this.shots.length; i++) {
+      const other = this.shots[i];
+      if (other !== shot && this.bandCarries(other)) continue;
+      if (other !== shot && this.bandHeld(i)) continue;
+      const sling = other.sling;
+      const pts: Array<{ x: number; y: number }> = [];
+      const count = 29;
+      for (let n = 0; n < count; n++) {
+        const t = n / (count - 1);
+        const x = sling.left.x + (sling.right.x - sling.left.x) * t;
+        pts.push({ x, y: emptyBandY(x, sling) });
+      }
+      bands.push({ pts });
+    }
+    return bands;
+  }
+
   /** Empty bands catch. A band already carrying its one ball cannot. */
   private canCatchOn(index: number): boolean {
     const phase = this.shots[index].phase;
@@ -820,7 +853,7 @@ export class Sim {
 
   private bandTouches(shot: Shot, x0: number, y0: number, x1: number, y1: number): boolean {
     const reach = BIRD_R + ROPE_THICKNESS / 2;
-    const pts = shot.band.points();
+    const pts = shot.band.copyPoints(this.touchPts);
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i];
       const b = pts[i + 1];

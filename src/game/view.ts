@@ -15,6 +15,7 @@ import {
   fingerPullCap,
   GRAVITY,
   launchSpeed,
+  LEVEL_ID,
   PLANKS,
   RAIL,
   ELBOWS,
@@ -23,7 +24,7 @@ import {
   SLINGS,
   type BallColor,
 } from './tune';
-import type { Sim } from './sim';
+import type { SimSample } from './sim';
 
 function circle(radius: number, color: number, segments = 40): THREE.Mesh {
   const mesh = new THREE.Mesh(
@@ -135,6 +136,7 @@ function sampleHintArc(
 }
 function humAlongForce(
   points: ReadonlyArray<{ x: number; y: number }>,
+  out: Array<{ x: number; y: number }>,
   birdX: number,
   birdY: number,
   aimX: number,
@@ -144,13 +146,33 @@ function humAlongForce(
   let reach = 1;
   for (const p of points) reach = Math.max(reach, Math.hypot(p.x - birdX, p.y - birdY));
   const contact = BIRD_R + 4;
-  return points.map((p, i) => {
-    if (i === 0 || i === points.length - 1) return { x: p.x, y: p.y };
+  while (out.length < points.length) out.push({ x: 0, y: 0 });
+  out.length = points.length;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const q = out[i];
+    if (i === 0 || i === points.length - 1) {
+      q.x = p.x;
+      q.y = p.y;
+      continue;
+    }
     const d = Math.hypot(p.x - birdX, p.y - birdY);
     const w = d <= contact ? 1 : Math.max(0, 1 - (d - contact) / (reach - contact));
-    return { x: p.x + aimX * amp * w, y: p.y + aimY * amp * w };
-  });
+    q.x = p.x + aimX * amp * w;
+    q.y = p.y + aimY * amp * w;
+  }
+  return out;
 }
+
+const ribbonRaw: Array<{ x: number; y: number }> = [];
+const ribbonPts: Array<{ x: number; y: number }> = [];
+const ribbonTang: Array<{ tx: number; ty: number }> = [];
+const ribbonSeg: Array<[number, number]> = [];
+const shadowRaw: Array<{ x: number; y: number }> = [];
+const shadowSwept: Array<{ x: number; y: number }> = Array.from({ length: 8 }, () => ({ x: 0, y: 0 }));
+const shadowLower: Array<{ x: number; y: number }> = [];
+const shadowUpper: Array<{ x: number; y: number }> = [];
+const shadowRing: Array<{ x: number; y: number }> = [];
 
 const RIBBON_VERTS = 640;
 const RIBBON_INDICES = 2400;
@@ -180,13 +202,15 @@ function writeRibbon(
     return i;
   };
 
-  const raw: Array<{ x: number; y: number }> = [];
+  const raw = ribbonRaw;
+  raw.length = 0;
   for (const p of points) {
     const last = raw[raw.length - 1];
     if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.35) continue;
     raw.push(p);
   }
-  const pts: Array<{ x: number; y: number }> = [];
+  const pts = ribbonPts;
+  pts.length = 0;
   for (let i = 0; i < raw.length; i++) {
     const prev = pts[pts.length - 1];
     const next = raw[i + 1];
@@ -203,16 +227,23 @@ function writeRibbon(
   }
   if (pts.length < 2) return 0;
 
-  const tang: Array<{ tx: number; ty: number }> = [];
-  for (let i = 0; i < pts.length - 1; i++) {
+  const tang = ribbonTang;
+  const tangCount = pts.length - 1;
+  while (tang.length < tangCount) tang.push({ tx: 0, ty: 0 });
+  tang.length = tangCount;
+  for (let i = 0; i < tangCount; i++) {
     let tx = pts[i + 1].x - pts[i].x;
     let ty = pts[i + 1].y - pts[i].y;
     const mag = Math.hypot(tx, ty) || 1;
-    tang.push({ tx: tx / mag, ty: ty / mag });
+    const t = tang[i];
+    t.tx = tx / mag;
+    t.ty = ty / mag;
   }
 
   const half = width / 2;
-  const segEnd: Array<[number, number]> = [];
+  const segEnd = ribbonSeg;
+  while (segEnd.length < tang.length) segEnd.push([0, 0]);
+  segEnd.length = tang.length;
 
   for (let i = 0; i < tang.length; i++) {
     const lx = -tang[i].ty * half;
@@ -254,7 +285,8 @@ function writeRibbon(
     }
     const eO = add(b.x + lx, b.y + ly);
     const eI = add(b.x - lx, b.y - ly);
-    segEnd.push([eO, eI]);
+    segEnd[i][0] = eO;
+    segEnd[i][1] = eI;
     indices[c++] = sO;
     indices[c++] = sI;
     indices[c++] = eO;
@@ -265,10 +297,16 @@ function writeRibbon(
   return c;
 }
 
-function meshGeom(vertCount: number, indexCount: number): THREE.BufferGeometry {
+function meshGeom(vertCount: number, indexCount: number, dynamic = false): THREE.BufferGeometry {
   const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
-  geom.setIndex(new THREE.BufferAttribute(new Uint32Array(indexCount), 1));
+  const position = new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3);
+  const index = new THREE.BufferAttribute(new Uint32Array(indexCount), 1);
+  if (dynamic) {
+    position.setUsage(THREE.DynamicDrawUsage);
+    index.setUsage(THREE.DynamicDrawUsage);
+  }
+  geom.setAttribute('position', position);
+  geom.setIndex(index);
   geom.setDrawRange(0, 0);
   return geom;
 }
@@ -338,7 +376,8 @@ function writeStrokeShadow(
   cast = 1,
 ): number {
   const cursor = { v: 0, c: 0 };
-  const raw: Array<{ x: number; y: number }> = [];
+  const raw = shadowRaw;
+  raw.length = 0;
   for (const p of points) {
     const last = raw[raw.length - 1];
     if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.35) continue;
@@ -369,25 +408,31 @@ function writeStrokeShadow(
     ty /= mag;
     const lx = -ty * radius;
     const ly = tx * radius;
-    const corners = [
-      { x: a.x + lx, y: a.y + ly },
-      { x: a.x - lx, y: a.y - ly },
-      { x: b.x + lx, y: b.y + ly },
-      { x: b.x - lx, y: b.y - ly },
-    ];
-    const swept = corners.flatMap((p) => [p, { x: p.x + SHADOW_X * cast, y: p.y + SHADOW_Y * cast }]);
+    const swept = shadowSwept;
+    const ox = SHADOW_X * cast;
+    const oy = SHADOW_Y * cast;
+    const cornerX = [a.x + lx, a.x - lx, b.x + lx, b.x - lx];
+    const cornerY = [a.y + ly, a.y - ly, b.y + ly, b.y - ly];
+    for (let k = 0; k < 4; k++) {
+      swept[k * 2].x = cornerX[k];
+      swept[k * 2].y = cornerY[k];
+      swept[k * 2 + 1].x = cornerX[k] + ox;
+      swept[k * 2 + 1].y = cornerY[k] + oy;
+    }
     swept.sort((p, q) => p.x - q.x || p.y - q.y);
     const cross = (
       o: { x: number; y: number },
       u: { x: number; y: number },
       w: { x: number; y: number },
     ) => (u.x - o.x) * (w.y - o.y) - (u.y - o.y) * (w.x - o.x);
-    const lower: Array<{ x: number; y: number }> = [];
+    const lower = shadowLower;
+    lower.length = 0;
     for (const p of swept) {
       while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
       lower.push(p);
     }
-    const upper: Array<{ x: number; y: number }> = [];
+    const upper = shadowUpper;
+    upper.length = 0;
     for (let k = swept.length - 1; k >= 0; k--) {
       const p = swept[k];
       while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
@@ -395,7 +440,10 @@ function writeStrokeShadow(
     }
     lower.pop();
     upper.pop();
-    const ring = lower.concat(upper);
+    const ring = shadowRing;
+    ring.length = 0;
+    for (const p of lower) ring.push(p);
+    for (const p of upper) ring.push(p);
     if (ring.length < 3) continue;
     let cx = 0;
     let cy = 0;
@@ -434,7 +482,7 @@ export function createPlayView(scene: THREE.Scene): {
   camera: THREE.OrthographicCamera;
   /** World shift of the framing camera. Touch samples add this. */
   look: { x: number; y: number };
-  sync: (sim: Sim, dt: number) => void;
+  sync: (sample: SimSample, dt: number) => void;
 } {
   scene.background = new THREE.Color(FIELD);
 
@@ -523,6 +571,8 @@ export function createPlayView(scene: THREE.Scene): {
       soft.frustumCulled = false;
       soft.renderOrder = i;
       soft.position.set(dx * SHADOW_BLUR * cast * t, dy * SHADOW_BLUR * cast * t, 0);
+      soft.userData.shadowX = soft.position.x;
+      soft.userData.shadowY = soft.position.y;
       group.add(soft);
     }
     const mesh = new THREE.Mesh(geom, shadowMat);
@@ -554,8 +604,8 @@ export function createPlayView(scene: THREE.Scene): {
 
   const BAND_SLOTS = 3;
   const arcs = Array.from({ length: BAND_SLOTS }, () => {
-    const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES);
-    const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES);
+    const geom = meshGeom(RIBBON_VERTS, RIBBON_INDICES, true);
+    const shadowGeom = meshGeom(SHADOW_VERTS, SHADOW_INDICES, true);
     const shadow = mountShadow(shadowGeom, NEAR_CAST);
     const mesh = new THREE.Mesh(geom, bandMat);
     mesh.frustumCulled = false;
@@ -689,27 +739,48 @@ export function createPlayView(scene: THREE.Scene): {
     return { body, shadow };
   });
   let hum = 0;
+  let bakedLevel = -1;
+  let capsuleKey = '';
+  const humPts = Array.from({ length: BAND_SLOTS }, () => [] as Array<{ x: number; y: number }>);
+  const ballRadius: number[] = [];
+  const bakeDisc = (geom: THREE.BufferGeometry, radius: number) => {
+    const attr = geom.getAttribute('position') as THREE.BufferAttribute;
+    const index = geom.getIndex() as THREE.BufferAttribute;
+    const cursor = { v: 0, c: 0 };
+    writeDiscSweep(attr.array as Float32Array, index.array as Uint32Array, 0, 0, radius, 0.2, cursor, NEAR_CAST);
+    geom.setDrawRange(0, cursor.c);
+    attr.needsUpdate = true;
+    index.needsUpdate = true;
+  };
+  for (const shadow of ballShadows) bakeDisc(shadow.mesh.geometry, BIRD_R);
+  for (const mark of restingBalls) bakeDisc(mark.shadow.mesh.geometry, BIRD_R);
 
   return {
     camera,
     look,
-    sync(sim: Sim, dt: number) {
-      const s = sim.sample();
+    sync(s: SimSample, dt: number) {
+      const fresh = bakedLevel !== LEVEL_ID;
       const cap = s.capsule;
       capsuleMesh.visible = Boolean(cap);
       capsuleShadow.visible = Boolean(cap);
       capsuleRivet.visible = Boolean(cap);
       if (cap) {
-        const flat = capsuleOutline(cap.length, cap.rThin, cap.rThick);
-        const shape = new THREE.Shape();
-        shape.moveTo(flat[0], flat[1]);
-        for (let i = 2; i < flat.length; i += 2) shape.lineTo(flat[i], flat[i + 1]);
-        shape.closePath();
-        capsuleMesh.geometry.dispose();
-        capsuleShadow.geometry.dispose();
-        const geom = new THREE.ShapeGeometry(shape);
-        capsuleMesh.geometry = geom;
-        capsuleShadow.geometry = geom.clone();
+        const key = `${cap.length}:${cap.rThin}:${cap.rThick}`;
+        if (key !== capsuleKey) {
+          capsuleKey = key;
+          const flat = capsuleOutline(cap.length, cap.rThin, cap.rThick);
+          const shape = new THREE.Shape();
+          shape.moveTo(flat[0], flat[1]);
+          for (let i = 2; i < flat.length; i += 2) shape.lineTo(flat[i], flat[i + 1]);
+          shape.closePath();
+          const previous = capsuleMesh.geometry;
+          const previousShadow = capsuleShadow.geometry;
+          const geom = new THREE.ShapeGeometry(shape);
+          capsuleMesh.geometry = geom;
+          capsuleShadow.geometry = geom.clone();
+          if (previous !== geom) previous.dispose();
+          if (previousShadow !== capsuleShadow.geometry) previousShadow.dispose();
+        }
         capsuleMesh.position.set(cap.x, cap.y, 0.3);
         capsuleMesh.rotation.z = cap.angle;
         capsuleShadow.position.set(cap.x + SHADOW_X * NEAR_CAST, cap.y + SHADOW_Y * NEAR_CAST, 0.1);
@@ -730,7 +801,7 @@ export function createPlayView(scene: THREE.Scene): {
           cap.material = paint;
           cap.visible = showBoard;
         }
-        if (!board) continue;
+        if (!board || !fresh) continue;
         const pts = board.vertical
           ? [
               { x: board.x, y: board.y + board.halfH },
@@ -772,7 +843,7 @@ export function createPlayView(scene: THREE.Scene): {
         slot.mesh.visible = elbowOn;
         slot.shadow.group.visible = elbowOn;
         for (const cap of slot.caps) cap.visible = elbowOn;
-        if (!elbow || !elbowOn) continue;
+        if (!elbow || !fresh) continue;
         const paint = bowlPaint[elbow.color];
         slot.mesh.material = paint;
         const geom = slot.mesh.geometry;
@@ -804,7 +875,7 @@ export function createPlayView(scene: THREE.Scene): {
       const rail = RAIL;
       railMesh.visible = Boolean(rail);
       for (const cap of railCaps) cap.visible = Boolean(rail);
-      if (rail) {
+      if (rail && fresh) {
         const pts = [
           { x: rail.x, y: rail.y + rail.halfH },
           { x: rail.x, y: rail.y - rail.halfH },
@@ -830,17 +901,20 @@ export function createPlayView(scene: THREE.Scene): {
         ribbon.material = paint;
         bagEnds[i * 2].material = paint;
         bagEnds[i * 2 + 1].material = paint;
-        if (!here || !BAGS[i]) {
+        if (!BAGS[i]) {
           ribbon.visible = false;
           bagRibbons[i].shadow.group.visible = false;
           bagEnds[i * 2].visible = false;
           bagEnds[i * 2 + 1].visible = false;
           continue;
         }
+        ribbon.visible = here;
+        bagRibbons[i].shadow.group.visible = here;
+        bagEnds[i * 2].visible = here;
+        bagEnds[i * 2 + 1].visible = here;
+        if (!fresh) continue;
         const pts = bagStrokePoints(BAGS[i], i);
         const shadow = bagRibbons[i].shadow;
-        ribbon.visible = here;
-        shadow.group.visible = here;
         const geom = ribbon.geometry;
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
         const index = geom.getIndex() as THREE.BufferAttribute;
@@ -864,7 +938,6 @@ export function createPlayView(scene: THREE.Scene): {
         const tips = [pts[0], pts[pts.length - 1]];
         for (let k = 0; k < 2; k++) {
           const end = bagEnds[i * 2 + k];
-          end.visible = here;
           end.position.set(tips[k].x, tips[k].y, 0.55);
           end.scale.set(endR, endR, 1);
         }
@@ -884,8 +957,9 @@ export function createPlayView(scene: THREE.Scene): {
         const sling = SLINGS[Math.floor(i / 2)];
         const side = sling ? (i % 2 === 0 ? sling.left : sling.right) : null;
         rivets[i].visible = Boolean(side);
-        if (side) rivets[i].position.set(side.x, side.y, 0.8);
+        if (fresh && side) rivets[i].position.set(side.x, side.y, 0.8);
       }
+      if (fresh) bakedLevel = LEVEL_ID;
       for (let i = 0; i < balls.length; i++) {
         if (i < s.shots.length) continue;
         arcs[i].mesh.visible = false;
@@ -911,19 +985,15 @@ export function createPlayView(scene: THREE.Scene): {
         ball.visible = shown;
         const body = ball.children[0] as THREE.Mesh;
         body.material = ballMat[shot.color];
-        ball.scale.set(BIRD_R * shot.scale, BIRD_R * shot.scale, 1);
+        const radius = BIRD_R * shot.scale;
+        ball.scale.set(radius, radius, 1);
         ballShadow.group.visible = shown;
-        const ballGeom = ballShadow.mesh.geometry;
-        const ballAttr = ballGeom.getAttribute('position') as THREE.BufferAttribute;
-        const ballIndex = ballGeom.getIndex() as THREE.BufferAttribute;
-        const ballCursor = { v: 0, c: 0 };
-        if (shown) {
-          writeDiscSweep(ballAttr.array as Float32Array, ballIndex.array as Uint32Array, bx, by, BIRD_R * shot.scale, 0.2, ballCursor, NEAR_CAST);
+        ballShadow.group.position.set(bx, by, 0);
+        if (shown && ballRadius[i] !== radius) {
+          bakeDisc(ballShadow.mesh.geometry, radius);
+          ballRadius[i] = radius;
         }
-        ballGeom.setDrawRange(0, ballCursor.c);
-        ballAttr.needsUpdate = true;
-        ballIndex.needsUpdate = true;
-        const points = amp === 0 ? shot.band : humAlongForce(shot.band, shot.birdX, shot.birdY, shot.aimX, shot.aimY, amp);
+        const points = amp === 0 ? shot.band : humAlongForce(shot.band, humPts[i], shot.birdX, shot.birdY, shot.aimX, shot.aimY, amp);
         const arc = arcs[i];
         arc.mesh.visible = true;
         arc.shadow.group.visible = true;
@@ -931,6 +1001,7 @@ export function createPlayView(scene: THREE.Scene): {
         const attr = geom.getAttribute('position') as THREE.BufferAttribute;
         const index = geom.getIndex() as THREE.BufferAttribute;
         const width = bandWidth(shot.strain);
+        const thin = width / bandWidth(0);
         const count = writeRibbon(
           attr.array as Float32Array,
           index.array as Uint32Array,
@@ -945,8 +1016,14 @@ export function createPlayView(scene: THREE.Scene): {
           shadowIndex.array as Uint32Array,
           points,
           width,
-          NEAR_CAST,
+          NEAR_CAST * thin,
         );
+        for (const child of arc.shadow.group.children) {
+          const sx = child.userData.shadowX;
+          const sy = child.userData.shadowY;
+          if (typeof sx !== 'number' || typeof sy !== 'number') continue;
+          child.position.set(sx * thin, sy * thin, 0);
+        }
         shadowGeom.setDrawRange(0, shadowCount);
         shadowAttr.needsUpdate = true;
         shadowIndex.needsUpdate = true;
@@ -972,14 +1049,7 @@ export function createPlayView(scene: THREE.Scene): {
         mark.body.position.set(held.x, held.y, 1);
         mark.body.material = ballMat[held.color];
         mark.body.scale.set(BIRD_R, BIRD_R, 1);
-        const geom = mark.shadow.mesh.geometry;
-        const attr = geom.getAttribute('position') as THREE.BufferAttribute;
-        const index = geom.getIndex() as THREE.BufferAttribute;
-        const cursor = { v: 0, c: 0 };
-        writeDiscSweep(attr.array as Float32Array, index.array as Uint32Array, held.x, held.y, BIRD_R, 0.2, cursor, NEAR_CAST);
-        geom.setDrawRange(0, cursor.c);
-        attr.needsUpdate = true;
-        index.needsUpdate = true;
+        mark.shadow.group.position.set(held.x, held.y, 0);
       }
       const pulling = SHOW_HINT ? s.shots.findIndex((item) => item.phase === 'pulling') : -1;
       let hint: HintDot[] = [];

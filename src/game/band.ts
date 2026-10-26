@@ -323,8 +323,18 @@ export class Band {
     this.holdSeated();
   }
 
-  points(): Array<{ x: number; y: number }> {
-    return this.nodes.map((n) => ({ x: n.x, y: n.y }));
+  /** Write the current nodes into `out`. Callers keep their own arrays so a sample is not overwritten by the next touch test. */
+  copyPoints(out: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+    const n = this.nodes.length;
+    while (out.length < n) out.push({ x: 0, y: 0 });
+    out.length = n;
+    for (let i = 0; i < n; i++) {
+      const node = this.nodes[i];
+      const p = out[i];
+      p.x = node.x;
+      p.y = node.y;
+    }
+    return out;
   }
 
   /** Rebuild the empty arc from the sling's current anchors. */

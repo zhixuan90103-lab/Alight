@@ -64,5 +64,6 @@ Xcode Run 真机
 | 设计分辨率 | `design.ts` + `style.css` |
 | 震动原生 | `plugins/native-haptics/*.swift` + bootstrap |
 | 启动 HUD | `index.html` + `main.ts` |
+| 出手帮助 | `src/game/aim.ts`。规则见 [GAME-RULES.md](./GAME-RULES.md)，数见 [IMPLEMENTATION.md](./IMPLEMENTATION.md) 第 5 节 |
 | 音效（规划） | [AUDIO.md](./AUDIO.md) |
 | 震动接线 | [HAPTICS.md](./HAPTICS.md) |

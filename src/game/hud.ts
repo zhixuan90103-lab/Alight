@@ -87,8 +87,11 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, next
   hud.addEventListener('pointerdown', stop);
   result.addEventListener('pointerdown', stop);
 
+  let shownBalls = -1;
+  let shownIssued = -1;
   return {
     sync(sample: SimSample) {
+      if (shownBalls === LEVEL_BALLS && shownIssued === sample.issued) return;
       while (pips.length < LEVEL_BALLS) {
         const dot = document.createElement('span');
         dot.className = 'ball-pip';
@@ -103,6 +106,8 @@ export function mountHud(uiRoot: HTMLElement, sim: Sim, replay: () => void, next
         pip.classList.toggle('is-empty', i < sample.issued);
         pip.classList.remove('is-blue', 'is-red');
       });
+      shownBalls = LEVEL_BALLS;
+      shownIssued = sample.issued;
     },
     showResult(passed: boolean) {
       verdict.textContent = passed ? '过关' : '失败';
